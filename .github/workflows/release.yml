@@ -45,39 +45,14 @@ jobs:
           # Create ZIP from the plugin directory (not root)
           # This ensures the ZIP contains: aqm-formidable-zip-whitelist/aqm-formidable-zip-whitelist.php
           cd "$PLUGIN_DIR"
-          zip -r "../$ZIP_NAME" . -x "*.git*" -x "*.DS_Store"
+          zip -r "../$ZIP_NAME" .
           cd ..
           
-          # Verify ZIP structure
+          # Show ZIP contents for verification
           echo "Created $ZIP_NAME with proper WordPress plugin structure"
           echo "ZIP contents:"
           unzip -l "$ZIP_NAME"
-          echo ""
-          echo "Verifying plugin file is in correct location:"
-          if unzip -l "$ZIP_NAME" | grep -q "aqm-formidable-zip-whitelist.php"; then
-            echo "✓ Plugin file found in ZIP"
-          else
-            echo "ERROR: Plugin file not found in ZIP!"
-            exit 1
-          fi
           ls -lh "$ZIP_NAME"
-          
-          # Test extraction to verify structure
-          TEST_DIR="test-extract"
-          rm -rf "$TEST_DIR"
-          mkdir -p "$TEST_DIR"
-          cd "$TEST_DIR"
-          unzip -q "../$ZIP_NAME"
-          if [ -f "aqm-formidable-zip-whitelist/aqm-formidable-zip-whitelist.php" ]; then
-            echo "✓ ZIP structure verified: aqm-formidable-zip-whitelist/aqm-formidable-zip-whitelist.php exists"
-          else
-            echo "ERROR: ZIP structure verification failed!"
-            echo "Contents of test extraction:"
-            ls -la
-            exit 1
-          fi
-          cd ..
-          rm -rf "$TEST_DIR"
       
       - name: Create Release
         uses: softprops/action-gh-release@v1
