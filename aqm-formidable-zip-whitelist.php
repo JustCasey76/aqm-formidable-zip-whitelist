@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AQM Formidable ZIP & State Whitelist (Hardened)
  * Description: Server-side ZIP/State allowlist for Formidable Forms. Auto-detects ZIP/State fields; error color/size controls. Hardened against Unicode/invisible chars and double-enforced on create/update.
- * Version: 1.8.6
+ * Version: 1.8.7
  * Author: AQ Marketing (Justin Casey)
  * License: GPL-2.0+
  */
@@ -12,7 +12,7 @@ if (!defined('ABSPATH')) exit;
 class AQM_Formidable_Location_Whitelist {
     const OPTION    = 'aqm_ff_location_whitelist';
     const PAGE_SLUG = 'aqm-ff-location-whitelist';
-    const VERSION   = '1.8.6';
+    const VERSION   = '1.8.7';
     private static $script_added = false;
 
     public function __construct() {
@@ -548,14 +548,24 @@ class AQM_Formidable_Location_Whitelist {
         
         $api_url = 'https://api.github.com/repos/JustCasey76/aqm-formidable-zip-whitelist/releases/latest';
         $response = wp_remote_get($api_url, [
-            'timeout' => 10,
+            'timeout' => 15,
             'headers' => [
                 'Accept' => 'application/vnd.github.v3+json',
+                'User-Agent' => 'WordPress/' . get_bloginfo('version'),
             ],
         ]);
         
         if (is_wp_error($response)) {
+            $error_message = $response->get_error_message();
+            error_log('AQM Plugin Update Check: GitHub API error - ' . $error_message);
             // Return cached version if API fails (better than nothing)
+            return $cached !== false ? $cached : false;
+        }
+        
+        $response_code = wp_remote_retrieve_response_code($response);
+        if ($response_code !== 200) {
+            $body = wp_remote_retrieve_body($response);
+            error_log('AQM Plugin Update Check: GitHub API returned code ' . $response_code . ' - ' . substr($body, 0, 200));
             return $cached !== false ? $cached : false;
         }
         
@@ -567,6 +577,9 @@ class AQM_Formidable_Location_Whitelist {
             set_transient($cache_key, $version, $cache_time);
             return $version;
         }
+        
+        // Log if tag_name is missing
+        error_log('AQM Plugin Update Check: GitHub API response missing tag_name. Response: ' . substr($body, 0, 500));
         
         return false;
     }
@@ -580,12 +593,7 @@ class AQM_Formidable_Location_Whitelist {
             return $links;
         }
         
-        $check_url = wp_nonce_url(
-            admin_url('admin-ajax.php?action=aqm_check_plugin_update'),
-            'aqm_check_update'
-        );
-        
-        $links[] = '<a href="' . esc_url($check_url) . '" class="aqm-check-update-link" data-plugin="' . esc_attr($file) . '">Check for Updates</a>';
+        $links[] = '<a href="#" class="aqm-check-update-link" data-plugin="' . esc_attr($file) . '">Check for Updates</a>';
         
         // Add inline script for AJAX handling (only once)
         if (!self::$script_added) {
@@ -603,21 +611,28 @@ class AQM_Formidable_Location_Whitelist {
         }
         ?>
         <script type="text/javascript">
-        jQuery(document).ready(function($) {
-            $('.aqm-check-update-link').on('click', function(e) {
+        (function($) {
+            console.log('AQM Update Checker: Script loaded');
+            $(document).ready(function() {
+                console.log('AQM Update Checker: Document ready, binding click handler');
+                $(document).on('click', '.aqm-check-update-link', function(e) {
                 e.preventDefault();
                 var $link = $(this);
                 var originalText = $link.text();
                 $link.text('Checking...').css('pointer-events', 'none');
                 
+                var ajaxUrl = typeof ajaxurl !== 'undefined' ? ajaxurl : '<?php echo admin_url('admin-ajax.php'); ?>';
+                console.log('AQM Update Checker: Making AJAX call to', ajaxUrl);
+                
                 $.ajax({
-                    url: ajaxurl,
+                    url: ajaxUrl,
                     type: 'POST',
                     data: {
                         action: 'aqm_check_plugin_update',
                         _ajax_nonce: '<?php echo wp_create_nonce('aqm_check_update'); ?>'
                     },
                     success: function(response) {
+                        console.log('AQM Update Check Response:', response);
                         if (response.success) {
                             if (response.data.has_update) {
                                 $link.text('Update Available: v' + response.data.latest_version)
@@ -625,35 +640,46 @@ class AQM_Formidable_Location_Whitelist {
                                      .attr('href', '<?php echo admin_url('update-core.php'); ?>');
                                 alert('New version ' + response.data.latest_version + ' is available! Go to Dashboard → Updates to install.');
                             } else {
-                                $link.text('Up to Date').css('color', '#00a32a');
+                                var msg = response.data.latest_version ? 'Up to Date (v' + response.data.latest_version + ')' : response.data.message;
+                                $link.text(msg).css('color', '#00a32a');
+                                if (response.data.debug) {
+                                    console.log('AQM Update Debug:', response.data.debug);
+                                }
                                 setTimeout(function() {
                                     $link.text(originalText).css('color', '');
-                                }, 3000);
+                                }, 5000);
                             }
                         } else {
                             $link.text('Error: ' + (response.data || 'Unknown error')).css('color', '#d63638');
+                            console.error('AQM Update Check Error:', response);
                             setTimeout(function() {
                                 $link.text(originalText).css('color', '');
-                            }, 3000);
+                            }, 5000);
                         }
                         $link.css('pointer-events', 'auto');
                     },
-                    error: function() {
+                    error: function(xhr, status, error) {
+                        console.error('AQM Update Check AJAX Error:', status, error, xhr);
                         $link.text('Error checking updates').css('color', '#d63638');
                         setTimeout(function() {
                             $link.text(originalText).css('color', '');
-                        }, 3000);
+                        }, 5000);
                         $link.css('pointer-events', 'auto');
                     }
                 });
-            });
-        });
+                }); // Close click handler
+            }); // Close ready
+        })(jQuery);
         </script>
         <?php
     }
 
     public function ajax_check_update() {
-        check_ajax_referer('aqm_check_update', '_ajax_nonce');
+        // Verify nonce
+        if (!isset($_POST['_ajax_nonce']) || !wp_verify_nonce($_POST['_ajax_nonce'], 'aqm_check_update')) {
+            wp_send_json_error('Security check failed');
+            return;
+        }
         
         if (!current_user_can('update_plugins')) {
             wp_send_json_error('Insufficient permissions');
@@ -674,6 +700,13 @@ class AQM_Formidable_Location_Whitelist {
         $latest_version = $this->get_latest_github_version(true);
         $current_version = self::VERSION;
         
+        // Debug info
+        $debug_info = [
+            'current_version' => $current_version,
+            'latest_version' => $latest_version,
+            'version_compare' => $latest_version ? version_compare($current_version, $latest_version, '<') : false,
+        ];
+        
         if ($latest_version && version_compare($current_version, $latest_version, '<')) {
             // Trigger WordPress to check again
             delete_site_transient('update_plugins');
@@ -682,14 +715,20 @@ class AQM_Formidable_Location_Whitelist {
                 'has_update' => true,
                 'current_version' => $current_version,
                 'latest_version' => $latest_version,
-                'message' => 'New version ' . $latest_version . ' is available!'
+                'message' => 'New version ' . $latest_version . ' is available!',
+                'debug' => $debug_info,
             ]);
         } else {
+            $message = 'You are running the latest version.';
+            if (!$latest_version) {
+                $message = 'Could not check for updates. The GitHub API may be unavailable or rate-limited.';
+            }
             wp_send_json_success([
                 'has_update' => false,
                 'current_version' => $current_version,
                 'latest_version' => $latest_version ?: $current_version,
-                'message' => 'You are running the latest version.'
+                'message' => $message,
+                'debug' => $debug_info,
             ]);
         }
     }
