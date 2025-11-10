@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AQM Formidable ZIP & State Whitelist (Hardened)
  * Description: Server-side ZIP/State allowlist for Formidable Forms. Auto-detects ZIP/State fields; error color/size controls. Hardened against Unicode/invisible chars and double-enforced on create/update.
- * Version: 1.9.8
+ * Version: 1.9.9
  * Author: AQ Marketing (Justin Casey)
  * License: GPL-2.0+
  */
@@ -18,7 +18,7 @@ if (!defined('AQM_GITHUB_TOKEN')) {
 class AQM_Formidable_Location_Whitelist {
     const OPTION    = 'aqm_ff_location_whitelist';
     const PAGE_SLUG = 'aqm-ff-location-whitelist';
-    const VERSION   = '1.9.8';
+    const VERSION   = '1.9.9';
     private static $script_added = false;
 
     public function __construct() {
@@ -811,18 +811,42 @@ class AQM_Formidable_Location_Whitelist {
                 
                 if (isset($data['assets']) && is_array($data['assets'])) {
                     error_log('AQM Plugin Update: Found ' . count($data['assets']) . ' assets in release');
+                    
+                    // First, try to find exact match
+                    $matching_asset = null;
                     foreach ($data['assets'] as $asset) {
                         if (isset($asset['name']) && strpos($asset['name'], 'aqm-formidable-zip-whitelist.zip') !== false) {
-                            error_log('AQM Plugin Update: Found matching asset: ' . $asset['name'] . ' (ID: ' . (isset($asset['id']) ? $asset['id'] : 'N/A') . ')');
-                            
-                            // Use the browser_download_url if available, otherwise use the API endpoint
-                            $download_url = isset($asset['browser_download_url']) ? $asset['browser_download_url'] : $asset['url'];
-                            
-                            // If using API endpoint, we need to use the asset ID endpoint
-                            if (isset($asset['id']) && strpos($download_url, '/assets/') === false) {
-                                $download_url = 'https://api.github.com/repos/JustCasey76/aqm-formidable-zip-whitelist/releases/assets/' . $asset['id'];
+                            $matching_asset = $asset;
+                            break;
+                        }
+                    }
+                    
+                    // If no exact match, try any .zip file
+                    if (!$matching_asset) {
+                        foreach ($data['assets'] as $asset) {
+                            if (isset($asset['name']) && strpos(strtolower($asset['name']), '.zip') !== false) {
+                                error_log('AQM Plugin Update: Using fallback ZIP asset: ' . $asset['name']);
+                                $matching_asset = $asset;
+                                break;
                             }
-                            
+                        }
+                    }
+                    
+                    if ($matching_asset) {
+                        $asset = $matching_asset;
+                        error_log('AQM Plugin Update: Found matching asset: ' . $asset['name'] . ' (ID: ' . (isset($asset['id']) ? $asset['id'] : 'N/A') . ')');
+                        
+                        // Use the asset ID endpoint for authenticated downloads (required for private repos)
+                        if (isset($asset['id'])) {
+                            $download_url = 'https://api.github.com/repos/JustCasey76/aqm-formidable-zip-whitelist/releases/assets/' . $asset['id'];
+                        } else {
+                            // Fallback to browser_download_url or url
+                            $download_url = isset($asset['browser_download_url']) ? $asset['browser_download_url'] : (isset($asset['url']) ? $asset['url'] : '');
+                        }
+                        
+                        if (empty($download_url)) {
+                            error_log('AQM Plugin Update: No download URL available for asset');
+                        } else {
                             error_log('AQM Plugin Update: Download URL: ' . $download_url);
                             
                             // Set up headers for binary download
@@ -874,14 +898,14 @@ class AQM_Formidable_Location_Whitelist {
                                 error_log('AQM Plugin Update: Download error: ' . $download_response->get_error_message());
                             }
                         }
-                    }
-                    
-                    if (empty($data['assets']) || count($data['assets']) === 0) {
-                        error_log('AQM Plugin Update: No assets found in release');
                     } else {
-                        error_log('AQM Plugin Update: Assets found but none matched aqm-formidable-zip-whitelist.zip');
-                        foreach ($data['assets'] as $asset) {
-                            error_log('AQM Plugin Update: Available asset: ' . (isset($asset['name']) ? $asset['name'] : 'unnamed'));
+                        if (empty($data['assets']) || count($data['assets']) === 0) {
+                            error_log('AQM Plugin Update: No assets found in release');
+                        } else {
+                            error_log('AQM Plugin Update: Assets found but none are ZIP files');
+                            foreach ($data['assets'] as $asset) {
+                                error_log('AQM Plugin Update: Available asset: ' . (isset($asset['name']) ? $asset['name'] : 'unnamed'));
+                            }
                         }
                     }
                 } else {
