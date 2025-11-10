@@ -9,6 +9,9 @@
 
 if (!defined('ABSPATH')) exit;
 
+// Prevent class redeclaration
+if (!class_exists('AQM_Formidable_Location_Whitelist')) {
+
 class AQM_Formidable_Location_Whitelist {
     const OPTION    = 'aqm_ff_location_whitelist';
     const PAGE_SLUG = 'aqm-ff-location-whitelist';
@@ -1265,4 +1268,9 @@ class AQM_Formidable_Location_Whitelist {
     }
 }
 
-new AQM_Formidable_Location_Whitelist();
+} // End class_exists check
+
+// Only instantiate if class exists and not already instantiated
+if (class_exists('AQM_Formidable_Location_Whitelist') && !isset($GLOBALS['aqm_formidable_location_whitelist'])) {
+    $GLOBALS['aqm_formidable_location_whitelist'] = new AQM_Formidable_Location_Whitelist();
+}
