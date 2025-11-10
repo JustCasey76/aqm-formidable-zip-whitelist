@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AQM Formidable ZIP & State Whitelist (Hardened)
  * Description: Server-side ZIP/State allowlist for Formidable Forms. Auto-detects ZIP/State fields; error color/size controls. Hardened against Unicode/invisible chars and double-enforced on create/update.
- * Version: 1.9.1
+ * Version: 1.9.2
  * Author: AQ Marketing (Justin Casey)
  * License: GPL-2.0+
  */
@@ -18,7 +18,7 @@ if (!defined('AQM_GITHUB_TOKEN')) {
 class AQM_Formidable_Location_Whitelist {
     const OPTION    = 'aqm_ff_location_whitelist';
     const PAGE_SLUG = 'aqm-ff-location-whitelist';
-    const VERSION   = '1.9.1';
+    const VERSION   = '1.9.2';
     private static $script_added = false;
 
     public function __construct() {
@@ -43,6 +43,8 @@ class AQM_Formidable_Location_Whitelist {
         add_action('load-update-core.php', [$this, 'clear_update_cache']);
         add_filter('plugin_row_meta', [$this, 'add_check_update_link'], 10, 2);
         add_action('wp_ajax_aqm_check_plugin_update', [$this, 'ajax_check_update']);
+        // Custom download handler for private repositories
+        add_filter('upgrader_pre_download', [$this, 'handle_private_repo_download'], 10, 3);
     }
 
     /* ---------------- Admin UI ---------------- */
@@ -756,7 +758,86 @@ class AQM_Formidable_Location_Whitelist {
     }
 
     private function get_github_download_url($version) {
+        // For private repositories, we need to use an authenticated download URL
+        // WordPress will download this, but we need to provide a URL that includes the token
+        // We'll use a custom download handler that authenticates the request
+        $github_token = '';
+        if (defined('AQM_GITHUB_TOKEN') && !empty(AQM_GITHUB_TOKEN) && AQM_GITHUB_TOKEN !== 'YOUR_GITHUB_TOKEN_HERE') {
+            $github_token = trim(AQM_GITHUB_TOKEN);
+        }
+        
+        // Return the direct GitHub release download URL
+        // We'll intercept the download via upgrader_pre_download filter to add authentication
         return "https://github.com/JustCasey76/aqm-formidable-zip-whitelist/releases/download/v{$version}/aqm-formidable-zip-whitelist.zip";
+    }
+    
+    public function handle_private_repo_download($reply, $package, $upgrader) {
+        // Only handle downloads for this plugin
+        if (strpos($package, 'aqm-formidable-zip-whitelist') === false) {
+            return $reply;
+        }
+        
+        // Get GitHub token
+        $github_token = '';
+        if (defined('AQM_GITHUB_TOKEN') && !empty(AQM_GITHUB_TOKEN) && AQM_GITHUB_TOKEN !== 'YOUR_GITHUB_TOKEN_HERE') {
+            $github_token = trim(AQM_GITHUB_TOKEN);
+        }
+        
+        if (empty($github_token)) {
+            return $reply; // No token, let WordPress handle normally
+        }
+        
+        // Extract version from package URL
+        if (preg_match('/v([\d.]+)\/aqm-formidable-zip-whitelist\.zip$/', $package, $matches)) {
+            $version = $matches[1];
+            
+            // Get the release assets from GitHub API to find the correct download URL
+            $api_url = 'https://api.github.com/repos/JustCasey76/aqm-formidable-zip-whitelist/releases/tags/v' . $version;
+            $headers = [
+                'Accept' => 'application/vnd.github.v3+json',
+                'User-Agent' => 'WordPress/' . get_bloginfo('version'),
+            ];
+            
+            if (strpos($github_token, 'github_pat_') === 0) {
+                $headers['Authorization'] = 'Bearer ' . $github_token;
+            } else {
+                $headers['Authorization'] = 'token ' . $github_token;
+            }
+            
+            $response = wp_remote_get($api_url, [
+                'timeout' => 15,
+                'headers' => $headers,
+            ]);
+            
+            if (!is_wp_error($response) && wp_remote_retrieve_response_code($response) === 200) {
+                $body = wp_remote_retrieve_body($response);
+                $data = json_decode($body, true);
+                
+                if (isset($data['assets']) && is_array($data['assets'])) {
+                    foreach ($data['assets'] as $asset) {
+                        if (isset($asset['url']) && strpos($asset['name'], 'aqm-formidable-zip-whitelist.zip') !== false) {
+                            // Download the file with authentication using the API URL
+                            $download_url = $asset['url']; // This is the authenticated API endpoint
+                            $download_response = wp_remote_get($download_url, [
+                                'timeout' => 300,
+                                'headers' => array_merge($headers, ['Accept' => 'application/octet-stream']),
+                            ]);
+                            
+                            if (!is_wp_error($download_response) && wp_remote_retrieve_response_code($download_response) === 200) {
+                                $file_path = get_temp_dir() . 'aqm-formidable-zip-whitelist-' . $version . '.zip';
+                                $file_content = wp_remote_retrieve_body($download_response);
+                                
+                                if (file_put_contents($file_path, $file_content) !== false) {
+                                    return $file_path; // Return file path for WordPress to use
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        return $reply; // Fallback to default behavior
     }
 
     public function add_check_update_link($links, $file) {
