@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AQM Formidable ZIP & State Whitelist (Hardened)
  * Description: Server-side ZIP/State allowlist for Formidable Forms. Auto-detects ZIP/State fields; error color/size controls. Hardened against Unicode/invisible chars and double-enforced on create/update.
- * Version: 1.8.0
+ * Version: 1.8.1
  * Author: AQ Marketing (Justin Casey)
  * License: GPL-2.0+
  */
@@ -12,7 +12,7 @@ if (!defined('ABSPATH')) exit;
 class AQM_Formidable_Location_Whitelist {
     const OPTION    = 'aqm_ff_location_whitelist';
     const PAGE_SLUG = 'aqm-ff-location-whitelist';
-    const VERSION   = '1.8.0';
+    const VERSION   = '1.8.1';
 
     public function __construct() {
         // Run migration on plugin load
@@ -271,10 +271,15 @@ class AQM_Formidable_Location_Whitelist {
                 $zip_field_present = $this->is_field_present_in_posted($posted, $zip_ids);
                 if($zip_field_present){
                     [$zip_val,$zip_fid] = $this->get_first_field_value($posted,$zip_ids);
-                    $zip_val = $this->hardened_normalize_zip($zip_val);
-                    if($zip_val === '' || !in_array($zip_val,$zip_list,true)){
-                        $errors["field{$zip_fid}"] = $zip_msg;
+                    // Only validate if user has entered a value
+                    if($zip_val !== '' && $zip_val !== null){
+                        $zip_val = $this->hardened_normalize_zip($zip_val);
+                        // Only show error if value is not in allowed list
+                        if($zip_val === '' || !in_array($zip_val,$zip_list,true)){
+                            $errors["field{$zip_fid}"] = $zip_msg;
+                        }
                     }
+                    // If field is empty, skip validation (let required field validation handle it)
                 }
                 // If field not present, skip validation (we're on an earlier step)
             }
@@ -292,10 +297,15 @@ class AQM_Formidable_Location_Whitelist {
                 $state_field_present = $this->is_field_present_in_posted($posted, $state_ids);
                 if($state_field_present){
                     [$state_val,$state_fid] = $this->get_first_field_value($posted,$state_ids);
-                    $state_code = $this->hardened_normalize_state($state_val);
-                    if($state_code === '' || !in_array($state_code,$state_codes,true)){
-                        $errors["field{$state_fid}"] = $state_msg;
+                    // Only validate if user has entered a value
+                    if($state_val !== '' && $state_val !== null){
+                        $state_code = $this->hardened_normalize_state($state_val);
+                        // Only show error if value is not in allowed list
+                        if($state_code === '' || !in_array($state_code,$state_codes,true)){
+                            $errors["field{$state_fid}"] = $state_msg;
+                        }
                     }
+                    // If field is empty, skip validation (let required field validation handle it)
                 }
                 // If field not present, skip validation (we're on an earlier step)
             }
