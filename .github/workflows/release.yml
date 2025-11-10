@@ -24,11 +24,26 @@ jobs:
       
       - name: Create ZIP file
         run: |
+          set -e  # Exit on any error
+          
           PLUGIN_DIR="aqm-formidable-zip-whitelist"
           ZIP_NAME="aqm-formidable-zip-whitelist.zip"
           
+          echo "Current directory: $(pwd)"
+          echo "Listing files:"
+          ls -la
+          
           # Clean up any existing files
-          rm -rf "$PLUGIN_DIR" "$ZIP_NAME"
+          rm -rf "$PLUGIN_DIR" "$ZIP_NAME" || true
+          
+          # Verify plugin file exists
+          if [ ! -f "aqm-formidable-zip-whitelist.php" ]; then
+            echo "ERROR: Plugin file aqm-formidable-zip-whitelist.php not found in repository root!"
+            ls -la
+            exit 1
+          fi
+          
+          echo "Plugin file found, creating directory structure..."
           
           # Create plugin directory structure
           mkdir -p "$PLUGIN_DIR"
@@ -38,20 +53,35 @@ jobs:
           
           # Verify the file was copied
           if [ ! -f "$PLUGIN_DIR/aqm-formidable-zip-whitelist.php" ]; then
-            echo "ERROR: Plugin file not found in directory!"
+            echo "ERROR: Plugin file not found in directory after copy!"
+            ls -la "$PLUGIN_DIR"
             exit 1
           fi
+          
+          echo "File copied successfully, creating ZIP..."
           
           # Create ZIP from the plugin directory (not root)
           # This ensures the ZIP contains: aqm-formidable-zip-whitelist/aqm-formidable-zip-whitelist.php
           cd "$PLUGIN_DIR"
-          zip -r "../$ZIP_NAME" .
+          zip -r "../$ZIP_NAME" . || {
+            echo "ERROR: zip command failed!"
+            exit 1
+          }
           cd ..
+          
+          # Verify ZIP was created
+          if [ ! -f "$ZIP_NAME" ]; then
+            echo "ERROR: ZIP file was not created!"
+            exit 1
+          fi
           
           # Show ZIP contents for verification
           echo "Created $ZIP_NAME with proper WordPress plugin structure"
           echo "ZIP contents:"
-          unzip -l "$ZIP_NAME"
+          unzip -l "$ZIP_NAME" || {
+            echo "ERROR: Failed to list ZIP contents!"
+            exit 1
+          }
           ls -lh "$ZIP_NAME"
       
       - name: Create Release
