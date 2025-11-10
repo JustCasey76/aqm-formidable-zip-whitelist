@@ -24,16 +24,23 @@ jobs:
       
       - name: Create ZIP file
         run: |
+          PLUGIN_DIR="aqm-formidable-zip-whitelist"
           ZIP_NAME="aqm-formidable-zip-whitelist.zip"
-          # Exclude git files and the zip itself
-          zip -r "$ZIP_NAME" . \
-            -x "*.git*" \
-            -x "*.github*" \
-            -x "*.zip" \
-            -x "*.md" \
-            -x ".DS_Store" \
-            -x "*.log"
-          echo "Created $ZIP_NAME"
+          
+          # Create plugin directory structure
+          mkdir -p "$PLUGIN_DIR"
+          
+          # Copy plugin file to the directory
+          cp aqm-formidable-zip-whitelist.php "$PLUGIN_DIR/"
+          
+          # Create ZIP from the plugin directory (not root)
+          cd "$PLUGIN_DIR"
+          zip -r "../$ZIP_NAME" . -x "*.git*" -x "*.DS_Store"
+          cd ..
+          
+          echo "Created $ZIP_NAME with proper WordPress plugin structure"
+          echo "ZIP contents:"
+          unzip -l "$ZIP_NAME" | head -20
           ls -lh "$ZIP_NAME"
       
       - name: Create Release
@@ -52,4 +59,5 @@ jobs:
           prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
 
