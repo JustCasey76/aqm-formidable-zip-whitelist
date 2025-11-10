@@ -2,17 +2,23 @@
 /**
  * Plugin Name: AQM Formidable ZIP & State Whitelist (Hardened)
  * Description: Server-side ZIP/State allowlist for Formidable Forms. Auto-detects ZIP/State fields; error color/size controls. Hardened against Unicode/invisible chars and double-enforced on create/update.
- * Version: 1.8.8
+ * Version: 1.8.9
  * Author: AQ Marketing (Justin Casey)
  * License: GPL-2.0+
  */
 
 if (!defined('ABSPATH')) exit;
 
+// GitHub Personal Access Token for private repository access
+// Replace 'YOUR_GITHUB_TOKEN_HERE' with your actual token
+if (!defined('AQM_GITHUB_TOKEN')) {
+    define('AQM_GITHUB_TOKEN', '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');
+}
+
 class AQM_Formidable_Location_Whitelist {
     const OPTION    = 'aqm_ff_location_whitelist';
     const PAGE_SLUG = 'aqm-ff-location-whitelist';
-    const VERSION   = '1.8.8';
+    const VERSION   = '1.8.9';
     private static $script_added = false;
 
     public function __construct() {
@@ -141,6 +147,21 @@ class AQM_Formidable_Location_Whitelist {
             printf('<input type="number" name="%s[error_font_size]" value="%s" min="10" max="40" step="1" />',esc_attr(self::OPTION),esc_attr($o['error_font_size']));
             echo '<p class="description">Set the font size for error messages (10-40 pixels).</p>';
         },self::OPTION,'aqm_section_style');
+        
+        // GitHub Update Settings
+        add_settings_section('github_updates','GitHub Updates',function(){
+            $has_token = defined('AQM_GITHUB_TOKEN') && !empty(AQM_GITHUB_TOKEN) && AQM_GITHUB_TOKEN !== 'YOUR_GITHUB_TOKEN_HERE';
+            if ($has_token) {
+                $masked = substr(AQM_GITHUB_TOKEN, 0, 4) . str_repeat('*', max(0, strlen(AQM_GITHUB_TOKEN) - 8)) . substr(AQM_GITHUB_TOKEN, -4);
+                echo '<p style="color: #00a32a;"><strong>✓ GitHub token is configured</strong></p>';
+                echo '<p style="color: #646970;">Token: <code>' . esc_html($masked) . '</code></p>';
+                echo '<p class="description">The token is automatically loaded from the plugin file. To change it, edit <code>AQM_GITHUB_TOKEN</code> in the plugin file.</p>';
+            } else {
+                echo '<p style="color: #d63638;"><strong>⚠ GitHub token not configured</strong></p>';
+                echo '<p>To enable update checking for your private repository, edit the plugin file and replace <code>YOUR_GITHUB_TOKEN_HERE</code> with your actual GitHub Personal Access Token.</p>';
+                echo '<p class="description">Create a token at <a href="https://github.com/settings/tokens" target="_blank">GitHub Settings → Developer settings → Personal access tokens</a> with <code>repo</code> scope.</p>';
+            }
+        },self::OPTION);
     }
 
     public function sanitize($in) {
@@ -156,6 +177,7 @@ class AQM_Formidable_Location_Whitelist {
         $o['state_error_msg']=isset($in['state_error_msg'])&&$in['state_error_msg']!==''?wp_kses_post($in['state_error_msg']):$o['state_error_msg'];
         $c=isset($in['error_color'])?sanitize_hex_color($in['error_color']):''; $o['error_color']=$c?$c:'#C4042D';
         $s=isset($in['error_font_size'])?absint($in['error_font_size']):16; $o['error_font_size']=($s>=10&&$s<=40)?$s:16;
+        $o['github_token']=isset($in['github_token'])?trim($in['github_token']):'';
         return $o;
     }
 
@@ -255,6 +277,7 @@ class AQM_Formidable_Location_Whitelist {
             'enable_zip_validation'=>0,'allowed_zips'=>'','zip_error_msg'=>'Sorry, we don\'t service this ZIP.',
             'enable_state_validation'=>0,'allowed_states'=>'','state_error_msg'=>'Sorry, we only serve selected states.',
             'error_color'=>'#C4042D','error_font_size'=>16,
+            'github_token'=>'',
             '_version'=>self::VERSION,
         ];
     }
@@ -543,48 +566,100 @@ class AQM_Formidable_Location_Whitelist {
         
         // If forcing fresh check or on update page, always check fresh. Otherwise use cache.
         if ($cached !== false && !$is_update_page && !$force_fresh) {
-            if ($error_info !== null) {
-                $error_info = ['type' => 'cached', 'version' => $cached];
-            }
+            $error_info = ['type' => 'cached', 'version' => $cached];
             return $cached;
         }
         
-        $api_url = 'https://api.github.com/repos/JustCasey76/aqm-formidable-zip-whitelist/releases/latest';
+        // Get GitHub token - from plugin constant (automatically configured)
+        $github_token = '';
+        if (defined('AQM_GITHUB_TOKEN') && !empty(AQM_GITHUB_TOKEN) && AQM_GITHUB_TOKEN !== 'YOUR_GITHUB_TOKEN_HERE') {
+            $github_token = trim(AQM_GITHUB_TOKEN);
+        }
+        
+        // Try /releases endpoint first (more reliable than /latest)
+        $api_url = 'https://api.github.com/repos/JustCasey76/aqm-formidable-zip-whitelist/releases';
+        $headers = [
+            'Accept' => 'application/vnd.github.v3+json',
+            'User-Agent' => 'WordPress/' . get_bloginfo('version'),
+        ];
+        
+        // Add authentication header if token is provided
+        if (!empty($github_token)) {
+            $headers['Authorization'] = 'token ' . $github_token;
+        }
+        
         $response = wp_remote_get($api_url, [
             'timeout' => 15,
-            'headers' => [
-                'Accept' => 'application/vnd.github.v3+json',
-                'User-Agent' => 'WordPress/' . get_bloginfo('version'),
-            ],
+            'headers' => $headers,
         ]);
+        
+        error_log('AQM Plugin Update Check: Checking /releases endpoint: ' . $api_url . (empty($github_token) ? ' (no token)' : ' (with token)'));
         
         if (is_wp_error($response)) {
             $error_message = $response->get_error_message();
             $error_code = $response->get_error_code();
             error_log('AQM Plugin Update Check: GitHub API error - ' . $error_code . ': ' . $error_message);
-            if ($error_info !== null) {
-                $error_info = [
-                    'type' => 'wp_error',
-                    'code' => $error_code,
-                    'message' => $error_message,
-                ];
-            }
+            $error_info = [
+                'type' => 'wp_error',
+                'code' => $error_code,
+                'message' => $error_message,
+            ];
             // Return cached version if API fails (better than nothing)
             return $cached !== false ? $cached : false;
         }
         
         $response_code = wp_remote_retrieve_response_code($response);
+        if ($response_code === 404) {
+            // No releases found - this might be because repo is private and no token was provided
+            if (empty($github_token)) {
+                error_log('AQM Plugin Update Check: 404 error - Repository is private but no GitHub token provided.');
+                $body = wp_remote_retrieve_body($response);
+                $error_body = substr($body, 0, 500);
+                $error_info = [
+                    'type' => 'http_error',
+                    'code' => 404,
+                    'body' => $error_body,
+                    'message' => 'Repository is private. Please add a GitHub Personal Access Token in the plugin settings (Location Whitelist → GitHub Updates).',
+                ];
+                return $cached !== false ? $cached : false;
+            }
+            
+            // No releases found even with token
+            $body = wp_remote_retrieve_body($response);
+            $error_body = substr($body, 0, 500);
+            error_log('AQM Plugin Update Check: No releases found. GitHub API returned 404.');
+            $error_info = [
+                'type' => 'http_error',
+                'code' => 404,
+                'body' => $error_body,
+                'message' => 'No releases found. The GitHub Actions workflow may not have created a release yet, or releases may be drafts. Please check https://github.com/JustCasey76/aqm-formidable-zip-whitelist/releases',
+            ];
+            return $cached !== false ? $cached : false;
+        }
+        
+        if ($response_code === 401) {
+            // Unauthorized - token is invalid or missing
+            error_log('AQM Plugin Update Check: 401 Unauthorized - GitHub token may be invalid or expired.');
+            $body = wp_remote_retrieve_body($response);
+            $error_body = substr($body, 0, 500);
+            $error_info = [
+                'type' => 'http_error',
+                'code' => 401,
+                'body' => $error_body,
+                'message' => 'GitHub authentication failed. Please check your Personal Access Token in the plugin settings.',
+            ];
+            return $cached !== false ? $cached : false;
+        }
+        
         if ($response_code !== 200) {
             $body = wp_remote_retrieve_body($response);
             $error_body = substr($body, 0, 500);
             error_log('AQM Plugin Update Check: GitHub API returned code ' . $response_code . ' - ' . $error_body);
-            if ($error_info !== null) {
-                $error_info = [
-                    'type' => 'http_error',
-                    'code' => $response_code,
-                    'body' => $error_body,
-                ];
-            }
+            $error_info = [
+                'type' => 'http_error',
+                'code' => $response_code,
+                'body' => $error_body,
+            ];
             return $cached !== false ? $cached : false;
         }
         
@@ -593,40 +668,45 @@ class AQM_Formidable_Location_Whitelist {
         
         if (json_last_error() !== JSON_ERROR_NONE) {
             error_log('AQM Plugin Update Check: JSON decode error - ' . json_last_error_msg());
-            if ($error_info !== null) {
-                $error_info = [
-                    'type' => 'json_error',
-                    'message' => json_last_error_msg(),
-                    'body_preview' => substr($body, 0, 500),
-                ];
-            }
+            $error_info = [
+                'type' => 'json_error',
+                'message' => json_last_error_msg(),
+                'body_preview' => substr($body, 0, 500),
+            ];
             return $cached !== false ? $cached : false;
         }
         
-        if (isset($data['tag_name']) && !empty($data['tag_name'])) {
-            $version = ltrim($data['tag_name'], 'v'); // Remove 'v' prefix if present
-            set_transient($cache_key, $version, $cache_time);
-            return $version;
+        // $data is an array of releases, find the first non-draft, non-prerelease release
+        if (is_array($data) && !empty($data)) {
+            error_log('AQM Plugin Update Check: Found ' . count($data) . ' releases');
+            foreach ($data as $release) {
+                if (isset($release['tag_name']) && !empty($release['tag_name']) && 
+                    empty($release['draft']) && empty($release['prerelease'])) {
+                    $version = ltrim($release['tag_name'], 'v'); // Remove 'v' prefix if present
+                    error_log('AQM Plugin Update Check: Found valid release version: ' . $version);
+                    set_transient($cache_key, $version, $cache_time);
+                    $error_info = null; // Clear error info on success
+                    return $version;
+                }
+            }
+            error_log('AQM Plugin Update Check: All releases are drafts or prereleases');
         }
         
-        // Log if tag_name is missing - this is the most likely scenario
+        // Log if no valid releases found
         $debug_body = substr($body, 0, 1000);
         $response_keys = isset($data) && is_array($data) ? array_keys($data) : [];
-        error_log('AQM Plugin Update Check: GitHub API response missing tag_name. Response code: ' . $response_code . ' | Keys: ' . implode(', ', $response_keys) . ' | Response: ' . $debug_body);
+        error_log('AQM Plugin Update Check: No valid releases found. Response code: ' . $response_code . ' | Keys: ' . implode(', ', $response_keys) . ' | Response: ' . $debug_body);
         
-        // Always set error_info if it was passed by reference
-        if ($error_info !== null) {
-            $error_info = [
-                'type' => 'missing_tag',
-                'response_keys' => $response_keys,
-                'body_preview' => $debug_body,
-                'has_data' => isset($data) && is_array($data),
-                'data_type' => gettype($data),
-                'response_code' => $response_code,
-                'tag_name_exists' => isset($data['tag_name']),
-                'tag_name_value' => isset($data['tag_name']) ? $data['tag_name'] : 'NOT_SET',
-            ];
-        }
+        // Always set error_info when no releases found
+        $error_info = [
+            'type' => 'no_releases',
+            'response_keys' => $response_keys,
+            'body_preview' => $debug_body,
+            'has_data' => isset($data) && is_array($data),
+            'data_type' => gettype($data),
+            'response_code' => $response_code,
+            'release_count' => is_array($data) ? count($data) : 0,
+        ];
         
         return false;
     }
@@ -691,6 +771,9 @@ class AQM_Formidable_Location_Whitelist {
                                 $link.text(msg).css('color', '#00a32a');
                                 if (response.data.debug) {
                                     console.log('AQM Update Debug:', response.data.debug);
+                                    if (response.data.debug.error_info) {
+                                        console.log('AQM Error Info Details:', JSON.stringify(response.data.debug.error_info, null, 2));
+                                    }
                                 }
                                 setTimeout(function() {
                                     $link.text(originalText).css('color', '');
