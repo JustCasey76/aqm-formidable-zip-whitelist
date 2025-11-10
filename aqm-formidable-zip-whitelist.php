@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AQM Formidable ZIP & State Whitelist (Hardened)
  * Description: Server-side ZIP/State allowlist for Formidable Forms. Auto-detects ZIP/State fields; error color/size controls. Hardened against Unicode/invisible chars and double-enforced on create/update.
- * Version: 1.8.9
+ * Version: 1.9.0
  * Author: AQ Marketing (Justin Casey)
  * License: GPL-2.0+
  */
@@ -18,7 +18,7 @@ if (!defined('AQM_GITHUB_TOKEN')) {
 class AQM_Formidable_Location_Whitelist {
     const OPTION    = 'aqm_ff_location_whitelist';
     const PAGE_SLUG = 'aqm-ff-location-whitelist';
-    const VERSION   = '1.8.9';
+    const VERSION   = '1.9.0';
     private static $script_added = false;
 
     public function __construct() {
@@ -585,7 +585,12 @@ class AQM_Formidable_Location_Whitelist {
         
         // Add authentication header if token is provided
         if (!empty($github_token)) {
-            $headers['Authorization'] = 'token ' . $github_token;
+            // Use Bearer token format (newer GitHub tokens use this)
+            if (strpos($github_token, 'github_pat_') === 0) {
+                $headers['Authorization'] = 'Bearer ' . $github_token;
+            } else {
+                $headers['Authorization'] = 'token ' . $github_token;
+            }
         }
         
         $response = wp_remote_get($api_url, [
@@ -593,7 +598,8 @@ class AQM_Formidable_Location_Whitelist {
             'headers' => $headers,
         ]);
         
-        error_log('AQM Plugin Update Check: Checking /releases endpoint: ' . $api_url . (empty($github_token) ? ' (no token)' : ' (with token)'));
+        $token_status = empty($github_token) ? ' (no token)' : ' (with token: ' . substr($github_token, 0, 10) . '...)';
+        error_log('AQM Plugin Update Check: Checking /releases endpoint: ' . $api_url . $token_status);
         
         if (is_wp_error($response)) {
             $error_message = $response->get_error_message();
@@ -619,20 +625,21 @@ class AQM_Formidable_Location_Whitelist {
                     'type' => 'http_error',
                     'code' => 404,
                     'body' => $error_body,
-                    'message' => 'Repository is private. Please add a GitHub Personal Access Token in the plugin settings (Location Whitelist → GitHub Updates).',
+                    'message' => 'Repository is private. Please configure AQM_GITHUB_TOKEN in the plugin file.',
                 ];
                 return $cached !== false ? $cached : false;
             }
             
-            // No releases found even with token
+            // No releases found even with token - could be authentication issue or no releases
             $body = wp_remote_retrieve_body($response);
             $error_body = substr($body, 0, 500);
-            error_log('AQM Plugin Update Check: No releases found. GitHub API returned 404.');
+            error_log('AQM Plugin Update Check: 404 error with token. Response: ' . $error_body);
             $error_info = [
                 'type' => 'http_error',
                 'code' => 404,
                 'body' => $error_body,
-                'message' => 'No releases found. The GitHub Actions workflow may not have created a release yet, or releases may be drafts. Please check https://github.com/JustCasey76/aqm-formidable-zip-whitelist/releases',
+                'message' => '404 Not Found. This could mean: (1) The token doesn\'t have access to the repository, (2) No releases exist yet, or (3) The repository path is incorrect. Please verify the token has "repo" scope and check https://github.com/JustCasey76/aqm-formidable-zip-whitelist/releases',
+                'has_token' => !empty($github_token),
             ];
             return $cached !== false ? $cached : false;
         }
