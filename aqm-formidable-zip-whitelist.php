@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AQM Formidable ZIP & State Whitelist (Hardened)
  * Description: Server-side ZIP/State allowlist for Formidable Forms. Auto-detects ZIP/State fields; error color/size controls. Hardened against Unicode/invisible chars and double-enforced on create/update.
- * Version: 1.8.4
+ * Version: 1.8.5
  * Author: AQ Marketing (Justin Casey)
  * License: GPL-2.0+
  */
@@ -12,7 +12,7 @@ if (!defined('ABSPATH')) exit;
 class AQM_Formidable_Location_Whitelist {
     const OPTION    = 'aqm_ff_location_whitelist';
     const PAGE_SLUG = 'aqm-ff-location-whitelist';
-    const VERSION   = '1.8.4';
+    const VERSION   = '1.8.5';
 
     public function __construct() {
         // Run migration on plugin load
@@ -33,6 +33,7 @@ class AQM_Formidable_Location_Whitelist {
         // GitHub update checker
         add_filter('pre_set_site_transient_update_plugins', [$this, 'check_for_updates']);
         add_filter('plugins_api', [$this, 'plugin_info'], 10, 3);
+        add_action('load-update-core.php', [$this, 'clear_update_cache']);
     }
 
     /* ---------------- Admin UI ---------------- */
@@ -490,9 +491,22 @@ class AQM_Formidable_Location_Whitelist {
                 'url' => 'https://github.com/JustCasey76/aqm-formidable-zip-whitelist',
                 'package' => $this->get_github_download_url($latest_version),
             ];
+        } else {
+            // Remove from response if no update (prevents stale updates)
+            unset($transient->response[$plugin_file]);
         }
         
         return $transient;
+    }
+
+    public function clear_update_cache() {
+        delete_transient('aqm_ff_whitelist_latest_version');
+        // Also clear WordPress update transient for this plugin
+        $transient = get_site_transient('update_plugins');
+        if ($transient && isset($transient->response[plugin_basename(__FILE__)])) {
+            unset($transient->response[plugin_basename(__FILE__)]);
+            set_site_transient('update_plugins', $transient);
+        }
     }
 
     public function plugin_info($false, $action, $response) {
@@ -514,9 +528,18 @@ class AQM_Formidable_Location_Whitelist {
 
     private function get_latest_github_version() {
         $cache_key = 'aqm_ff_whitelist_latest_version';
+        
+        // Check if we're on the updates page - if so, reduce cache time for faster detection
+        $is_update_page = (isset($_GET['page']) && $_GET['page'] === 'update-core.php') || 
+                          (isset($_GET['action']) && $_GET['action'] === 'upgrade-plugin');
+        
+        // Use shorter cache (5 minutes) when on update page, otherwise 1 hour
+        $cache_time = $is_update_page ? 5 * MINUTE_IN_SECONDS : 1 * HOUR_IN_SECONDS;
+        
         $cached = get_transient($cache_key);
         
-        if ($cached !== false) {
+        // If on update page, always check fresh. Otherwise use cache.
+        if ($cached !== false && !$is_update_page) {
             return $cached;
         }
         
@@ -529,7 +552,8 @@ class AQM_Formidable_Location_Whitelist {
         ]);
         
         if (is_wp_error($response)) {
-            return false;
+            // Return cached version if API fails (better than nothing)
+            return $cached !== false ? $cached : false;
         }
         
         $body = wp_remote_retrieve_body($response);
@@ -537,7 +561,7 @@ class AQM_Formidable_Location_Whitelist {
         
         if (isset($data['tag_name'])) {
             $version = ltrim($data['tag_name'], 'v'); // Remove 'v' prefix if present
-            set_transient($cache_key, $version, 12 * HOUR_IN_SECONDS); // Cache for 12 hours
+            set_transient($cache_key, $version, $cache_time);
             return $version;
         }
         
