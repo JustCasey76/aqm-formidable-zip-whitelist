@@ -5,8 +5,9 @@ on:
     branches:
       - main
       - master
-    tags:
-      - 'v*'
+    # Tags disabled - releases are handled by release.yml workflow
+    # tags:
+    #   - 'v*'
   workflow_dispatch:
 
 jobs:
