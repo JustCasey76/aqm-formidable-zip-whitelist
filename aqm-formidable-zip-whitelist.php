@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AQM Formidable ZIP & State Whitelist (Hardened)
  * Description: Server-side ZIP/State allowlist for Formidable Forms. Auto-detects ZIP/State fields; error color/size controls. Hardened against Unicode/invisible chars and double-enforced on create/update.
- * Version: 1.10.5
+ * Version: 1.10.6
  * Author: AQ Marketing (Justin Casey)
  * License: GPL-2.0+
  */
@@ -18,7 +18,7 @@ if (!defined('AQM_GITHUB_TOKEN')) {
 class AQM_Formidable_Location_Whitelist {
     const OPTION    = 'aqm_ff_location_whitelist';
     const PAGE_SLUG = 'aqm-ff-location-whitelist';
-    const VERSION   = '1.10.5';
+    const VERSION   = '1.10.6';
     private static $script_added = false;
 
     public function __construct() {
@@ -560,62 +560,21 @@ class AQM_Formidable_Location_Whitelist {
             return $cached;
         }
         
-        // Get GitHub token - from plugin constant (automatically configured)
-        $github_token = '';
-        if (defined('AQM_GITHUB_TOKEN') && !empty(AQM_GITHUB_TOKEN) && AQM_GITHUB_TOKEN !== 'YOUR_GITHUB_TOKEN_HERE') {
-            $github_token = trim(AQM_GITHUB_TOKEN);
-        }
-        
-        // First, verify token has access to the repository by checking repo info
-        $repo_url = 'https://api.github.com/repos/JustCasey76/aqm-formidable-zip-whitelist';
+        // Repository is public, so we don't need authentication
+        // Skip token authentication to avoid 401 errors with invalid/expired tokens
+        $api_url = 'https://api.github.com/repos/JustCasey76/aqm-formidable-zip-whitelist/releases';
         $headers = [
             'Accept' => 'application/vnd.github.v3+json',
             'User-Agent' => 'WordPress/' . get_bloginfo('version'),
         ];
         
-        // Add authentication header if token is provided
-        if (!empty($github_token)) {
-            // Use Bearer token format (newer GitHub tokens use this)
-            if (strpos($github_token, 'github_pat_') === 0) {
-                $headers['Authorization'] = 'Bearer ' . $github_token;
-            } else {
-                $headers['Authorization'] = 'token ' . $github_token;
-            }
-        }
+        // Don't use authentication for public repos
+        error_log('AQM Plugin Update Check: Checking /releases endpoint: ' . $api_url . ' (public repo, no authentication)');
         
-        // Test repository access first
-        $repo_response = wp_remote_get($repo_url, [
-            'timeout' => 15,
-            'headers' => $headers,
-        ]);
-        
-        $repo_code = !is_wp_error($repo_response) ? wp_remote_retrieve_response_code($repo_response) : 0;
-        error_log('AQM Plugin Update Check: Repository access test returned code: ' . $repo_code);
-        
-        if ($repo_code === 404) {
-            error_log('AQM Plugin Update Check: Repository not found or token has no access. Token type: ' . (strpos($github_token, 'github_pat_') === 0 ? 'fine-grained' : 'classic'));
-            $body = wp_remote_retrieve_body($repo_response);
-            $error_body = substr($body, 0, 500);
-            $error_info = [
-                'type' => 'http_error',
-                'code' => 404,
-                'body' => $error_body,
-                'message' => 'Repository not accessible. For fine-grained tokens, ensure: (1) Token has access to "JustCasey76/aqm-formidable-zip-whitelist" repository, (2) Token has "Contents: Read" permission. Edit token at https://github.com/settings/tokens',
-                'has_token' => !empty($github_token),
-                'token_type' => strpos($github_token, 'github_pat_') === 0 ? 'fine-grained' : 'classic',
-            ];
-            return $cached !== false ? $cached : false;
-        }
-        
-        // Try /releases endpoint
-        $api_url = 'https://api.github.com/repos/JustCasey76/aqm-formidable-zip-whitelist/releases';
         $response = wp_remote_get($api_url, [
             'timeout' => 15,
             'headers' => $headers,
         ]);
-        
-        $token_status = empty($github_token) ? ' (no token)' : ' (with token: ' . substr($github_token, 0, 10) . '...)';
-        error_log('AQM Plugin Update Check: Checking /releases endpoint: ' . $api_url . $token_status);
         
         if (is_wp_error($response)) {
             $error_message = $response->get_error_message();
@@ -638,49 +597,30 @@ class AQM_Formidable_Location_Whitelist {
         error_log('AQM Plugin Update Check: Response code: ' . $response_code . ', Rate limit remaining: ' . $rate_limit_remaining);
         
         if ($response_code === 404) {
-            // No releases found - this might be because repo is private and no token was provided
-            if (empty($github_token)) {
-                error_log('AQM Plugin Update Check: 404 error - Repository is private but no GitHub token provided.');
-                $body = wp_remote_retrieve_body($response);
-                $error_body = substr($body, 0, 500);
-                $error_info = [
-                    'type' => 'http_error',
-                    'code' => 404,
-                    'body' => $error_body,
-                    'message' => 'Repository is private. Please configure AQM_GITHUB_TOKEN in the plugin file.',
-                ];
-                return $cached !== false ? $cached : false;
-            }
-            
-            // No releases found even with token - could be authentication issue or no releases
+            // No releases found
             $body = wp_remote_retrieve_body($response);
             $error_body = substr($body, 0, 500);
-            $auth_header_used = strpos($github_token, 'github_pat_') === 0 ? 'Bearer' : 'token';
-            error_log('AQM Plugin Update Check: 404 error with token (using ' . $auth_header_used . ' auth). Response: ' . $error_body);
-            error_log('AQM Plugin Update Check: Token length: ' . strlen($github_token) . ', Token prefix: ' . substr($github_token, 0, 15));
+            error_log('AQM Plugin Update Check: 404 error - No releases found. Response: ' . $error_body);
             
             $error_info = [
                 'type' => 'http_error',
                 'code' => 404,
                 'body' => $error_body,
-                'message' => '404 Not Found. Possible causes: (1) Fine-grained token needs repository access configured in GitHub, (2) Token doesn\'t have "Contents: Read" permission, (3) Repository path incorrect, or (4) No releases exist. Check token permissions at https://github.com/settings/tokens',
-                'has_token' => !empty($github_token),
-                'token_type' => strpos($github_token, 'github_pat_') === 0 ? 'fine-grained' : 'classic',
-                'auth_method' => $auth_header_used,
+                'message' => 'No releases found. The GitHub Actions workflow may not have created a release yet, or releases may be drafts.',
             ];
             return $cached !== false ? $cached : false;
         }
         
         if ($response_code === 401) {
-            // Unauthorized - token is invalid or missing
-            error_log('AQM Plugin Update Check: 401 Unauthorized - GitHub token may be invalid or expired.');
+            // Unauthorized - shouldn't happen for public repos, but log it
+            error_log('AQM Plugin Update Check: 401 Unauthorized - Unexpected for public repository.');
             $body = wp_remote_retrieve_body($response);
             $error_body = substr($body, 0, 500);
             $error_info = [
                 'type' => 'http_error',
                 'code' => 401,
                 'body' => $error_body,
-                'message' => 'GitHub authentication failed. Please check your Personal Access Token in the plugin settings.',
+                'message' => 'Unexpected authentication error. Repository should be public.',
             ];
             return $cached !== false ? $cached : false;
         }
