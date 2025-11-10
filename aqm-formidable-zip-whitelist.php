@@ -38,7 +38,8 @@ class AQM_Formidable_Location_Whitelist {
         add_filter('plugin_row_meta', [$this, 'add_check_update_link'], 10, 2);
         add_action('wp_ajax_aqm_check_plugin_update', [$this, 'ajax_check_update']);
         // Custom download handler for private repositories
-        add_filter('upgrader_pre_download', [$this, 'handle_private_repo_download'], 10, 3);
+        // Use priority 1 to ensure we intercept before WordPress tries to download
+        add_filter('upgrader_pre_download', [$this, 'handle_private_repo_download'], 1, 3);
     }
 
     /* ---------------- Admin UI ---------------- */
@@ -489,24 +490,88 @@ class AQM_Formidable_Location_Whitelist {
         $latest_version = $this->get_latest_github_version();
         
         if ($latest_version && version_compare($current_version, $latest_version, '<')) {
-            $transient->response[$plugin_file] = (object) [
-                'slug' => 'aqm-formidable-zip-whitelist',
-                'plugin' => $plugin_file,
-                'new_version' => $latest_version,
-                'url' => 'https://github.com/JustCasey76/aqm-formidable-zip-whitelist',
-                'package' => $this->get_github_download_url($latest_version),
-                'id' => $plugin_file,
-                'tested' => get_bloginfo('version'),
-                'requires' => '5.0',
-                'requires_php' => '7.2',
-                'compatibility' => new stdClass(),
-            ];
+            // Verify the release actually exists and has assets before adding to update response
+            // This prevents the "Not Found" error and JavaScript issues
+            $release_verified = $this->verify_release_exists($latest_version);
+            
+            if ($release_verified) {
+                $transient->response[$plugin_file] = (object) [
+                    'slug' => 'aqm-formidable-zip-whitelist',
+                    'plugin' => $plugin_file,
+                    'new_version' => $latest_version,
+                    'url' => 'https://github.com/JustCasey76/aqm-formidable-zip-whitelist',
+                    'package' => $this->get_github_download_url($latest_version),
+                    'id' => $plugin_file,
+                    'tested' => get_bloginfo('version'),
+                    'requires' => '5.0',
+                    'requires_php' => '7.2',
+                    'compatibility' => new stdClass(),
+                ];
+            } else {
+                // Release doesn't exist or has no assets - don't show update
+                error_log('AQM Plugin Update: Release v' . $latest_version . ' exists but has no downloadable assets, skipping update notification');
+                unset($transient->response[$plugin_file]);
+            }
         } else {
             // Remove from response if no update (prevents stale updates)
             unset($transient->response[$plugin_file]);
         }
         
         return $transient;
+    }
+    
+    /**
+     * Verify that a release exists and has downloadable assets
+     */
+    private function verify_release_exists($version) {
+        // Try with 'v' prefix first
+        $api_url = 'https://api.github.com/repos/JustCasey76/aqm-formidable-zip-whitelist/releases/tags/v' . $version;
+        $headers = [
+            'Accept' => 'application/vnd.github.v3+json',
+            'User-Agent' => 'WordPress/' . get_bloginfo('version'),
+        ];
+        
+        $response = wp_remote_get($api_url, [
+            'timeout' => 10,
+            'headers' => $headers,
+        ]);
+        
+        // If 404, try without 'v' prefix
+        if (!is_wp_error($response)) {
+            $response_code = wp_remote_retrieve_response_code($response);
+            if ($response_code === 404) {
+                $api_url = 'https://api.github.com/repos/JustCasey76/aqm-formidable-zip-whitelist/releases/tags/' . $version;
+                $response = wp_remote_get($api_url, [
+                    'timeout' => 10,
+                    'headers' => $headers,
+                ]);
+            }
+        }
+        
+        if (is_wp_error($response)) {
+            return false;
+        }
+        
+        $response_code = wp_remote_retrieve_response_code($response);
+        if ($response_code !== 200) {
+            return false;
+        }
+        
+        $body = wp_remote_retrieve_body($response);
+        $data = json_decode($body, true);
+        
+        if (!is_array($data) || empty($data['assets']) || !is_array($data['assets'])) {
+            return false;
+        }
+        
+        // Check if there's at least one ZIP asset
+        foreach ($data['assets'] as $asset) {
+            if (isset($asset['name']) && strpos(strtolower($asset['name']), '.zip') !== false) {
+                return true;
+            }
+        }
+        
+        return false;
     }
 
     public function clear_update_cache() {
@@ -974,7 +1039,8 @@ class AQM_Formidable_Location_Whitelist {
                         // No matching asset found
                         error_log('AQM Plugin Update: ========== NO MATCHING ASSET FOUND ==========');
                         if (empty($data['assets']) || count($data['assets']) === 0) {
-                            error_log('AQM Plugin Update: No assets found in release');
+                            error_log('AQM Plugin Update: No assets found in release v' . $version);
+                            error_log('AQM Plugin Update: Release exists but has no downloadable assets. Please create a GitHub Release with a ZIP file attached.');
                         } else {
                             error_log('AQM Plugin Update: Assets found but none matched. Available assets:');
                             foreach ($data['assets'] as $asset) {
@@ -982,10 +1048,16 @@ class AQM_Formidable_Location_Whitelist {
                             }
                         }
                         
-                        // No assets found - let WordPress handle the download normally
-                        error_log('AQM Plugin Update: Letting WordPress handle download normally');
+                        // Return a clear error message instead of letting WordPress fail with "Not Found"
                         $recursion_depth = 0;
-                        return $reply; // Return original reply to let WordPress handle it
+                        return new WP_Error(
+                            'no_assets_found',
+                            'Release v' . $version . ' exists but has no downloadable ZIP file. Please create a GitHub Release with a ZIP asset attached.',
+                            [
+                                'version' => $version,
+                                'release_url' => isset($data['html_url']) ? $data['html_url'] : 'https://github.com/JustCasey76/aqm-formidable-zip-whitelist/releases',
+                            ]
+                        );
                     }
                 } else {
                     error_log('AQM Plugin Update: ERROR - Release data does not contain assets array');
