@@ -509,7 +509,6 @@ class AQM_Formidable_Location_Whitelist {
                     'requires' => '5.0',
                     'requires_php' => '7.2',
                     'compatibility' => new stdClass(),
-                    'plugin' => $plugin_file, // Ensure plugin path is set correctly
                 ];
             } else {
                 // Release doesn't exist or has no assets - don't show update
