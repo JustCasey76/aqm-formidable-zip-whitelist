@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AQM Formidable ZIP & State Whitelist (Hardened)
  * Description: Server-side ZIP/State allowlist for Formidable Forms. Auto-detects ZIP/State fields; error color/size controls. Hardened against Unicode/invisible chars and double-enforced on create/update.
- * Version: 1.8.5
+ * Version: 1.8.6
  * Author: AQ Marketing (Justin Casey)
  * License: GPL-2.0+
  */
@@ -12,7 +12,8 @@ if (!defined('ABSPATH')) exit;
 class AQM_Formidable_Location_Whitelist {
     const OPTION    = 'aqm_ff_location_whitelist';
     const PAGE_SLUG = 'aqm-ff-location-whitelist';
-    const VERSION   = '1.8.5';
+    const VERSION   = '1.8.6';
+    private static $script_added = false;
 
     public function __construct() {
         // Run migration on plugin load
@@ -34,6 +35,8 @@ class AQM_Formidable_Location_Whitelist {
         add_filter('pre_set_site_transient_update_plugins', [$this, 'check_for_updates']);
         add_filter('plugins_api', [$this, 'plugin_info'], 10, 3);
         add_action('load-update-core.php', [$this, 'clear_update_cache']);
+        add_filter('plugin_row_meta', [$this, 'add_check_update_link'], 10, 2);
+        add_action('wp_ajax_aqm_check_plugin_update', [$this, 'ajax_check_update']);
     }
 
     /* ---------------- Admin UI ---------------- */
@@ -526,7 +529,7 @@ class AQM_Formidable_Location_Whitelist {
         return $response;
     }
 
-    private function get_latest_github_version() {
+    private function get_latest_github_version($force_fresh = false) {
         $cache_key = 'aqm_ff_whitelist_latest_version';
         
         // Check if we're on the updates page - if so, reduce cache time for faster detection
@@ -538,8 +541,8 @@ class AQM_Formidable_Location_Whitelist {
         
         $cached = get_transient($cache_key);
         
-        // If on update page, always check fresh. Otherwise use cache.
-        if ($cached !== false && !$is_update_page) {
+        // If forcing fresh check or on update page, always check fresh. Otherwise use cache.
+        if ($cached !== false && !$is_update_page && !$force_fresh) {
             return $cached;
         }
         
@@ -570,6 +573,125 @@ class AQM_Formidable_Location_Whitelist {
 
     private function get_github_download_url($version) {
         return "https://github.com/JustCasey76/aqm-formidable-zip-whitelist/releases/download/v{$version}/aqm-formidable-zip-whitelist.zip";
+    }
+
+    public function add_check_update_link($links, $file) {
+        if ($file !== plugin_basename(__FILE__)) {
+            return $links;
+        }
+        
+        $check_url = wp_nonce_url(
+            admin_url('admin-ajax.php?action=aqm_check_plugin_update'),
+            'aqm_check_update'
+        );
+        
+        $links[] = '<a href="' . esc_url($check_url) . '" class="aqm-check-update-link" data-plugin="' . esc_attr($file) . '">Check for Updates</a>';
+        
+        // Add inline script for AJAX handling (only once)
+        if (!self::$script_added) {
+            add_action('admin_footer', [$this, 'add_check_update_script']);
+            self::$script_added = true;
+        }
+        
+        return $links;
+    }
+
+    public function add_check_update_script() {
+        $screen = get_current_screen();
+        if (!$screen || $screen->id !== 'plugins') {
+            return; // Only on plugins page
+        }
+        ?>
+        <script type="text/javascript">
+        jQuery(document).ready(function($) {
+            $('.aqm-check-update-link').on('click', function(e) {
+                e.preventDefault();
+                var $link = $(this);
+                var originalText = $link.text();
+                $link.text('Checking...').css('pointer-events', 'none');
+                
+                $.ajax({
+                    url: ajaxurl,
+                    type: 'POST',
+                    data: {
+                        action: 'aqm_check_plugin_update',
+                        _ajax_nonce: '<?php echo wp_create_nonce('aqm_check_update'); ?>'
+                    },
+                    success: function(response) {
+                        if (response.success) {
+                            if (response.data.has_update) {
+                                $link.text('Update Available: v' + response.data.latest_version)
+                                     .css('color', '#d63638')
+                                     .attr('href', '<?php echo admin_url('update-core.php'); ?>');
+                                alert('New version ' + response.data.latest_version + ' is available! Go to Dashboard → Updates to install.');
+                            } else {
+                                $link.text('Up to Date').css('color', '#00a32a');
+                                setTimeout(function() {
+                                    $link.text(originalText).css('color', '');
+                                }, 3000);
+                            }
+                        } else {
+                            $link.text('Error: ' + (response.data || 'Unknown error')).css('color', '#d63638');
+                            setTimeout(function() {
+                                $link.text(originalText).css('color', '');
+                            }, 3000);
+                        }
+                        $link.css('pointer-events', 'auto');
+                    },
+                    error: function() {
+                        $link.text('Error checking updates').css('color', '#d63638');
+                        setTimeout(function() {
+                            $link.text(originalText).css('color', '');
+                        }, 3000);
+                        $link.css('pointer-events', 'auto');
+                    }
+                });
+            });
+        });
+        </script>
+        <?php
+    }
+
+    public function ajax_check_update() {
+        check_ajax_referer('aqm_check_update', '_ajax_nonce');
+        
+        if (!current_user_can('update_plugins')) {
+            wp_send_json_error('Insufficient permissions');
+            return;
+        }
+        
+        // Clear cache to force fresh check
+        delete_transient('aqm_ff_whitelist_latest_version');
+        
+        // Also clear WordPress update transient
+        $transient = get_site_transient('update_plugins');
+        if ($transient && isset($transient->response[plugin_basename(__FILE__)])) {
+            unset($transient->response[plugin_basename(__FILE__)]);
+            set_site_transient('update_plugins', $transient);
+        }
+        
+        // Force fresh check
+        $latest_version = $this->get_latest_github_version(true);
+        $current_version = self::VERSION;
+        
+        if ($latest_version && version_compare($current_version, $latest_version, '<')) {
+            // Trigger WordPress to check again
+            delete_site_transient('update_plugins');
+            
+            wp_send_json_success([
+                'has_update' => true,
+                'current_version' => $current_version,
+                'latest_version' => $latest_version,
+                'message' => 'New version ' . $latest_version . ' is available!'
+            ]);
+        } else {
+            wp_send_json_success([
+                'has_update' => false,
+                'current_version' => $current_version,
+                'latest_version' => $latest_version ?: $current_version,
+                'message' => 'You are running the latest version.'
+            ]);
+        }
     }
 }
 
