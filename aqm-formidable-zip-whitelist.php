@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AQM Formidable ZIP & State Whitelist (Hardened)
  * Description: Server-side ZIP/State allowlist for Formidable Forms. Auto-detects ZIP/State fields; error color/size controls. Hardened against Unicode/invisible chars and double-enforced on create/update.
- * Version: 1.9.7
+ * Version: 1.9.8
  * Author: AQ Marketing (Justin Casey)
  * License: GPL-2.0+
  */
@@ -18,7 +18,7 @@ if (!defined('AQM_GITHUB_TOKEN')) {
 class AQM_Formidable_Location_Whitelist {
     const OPTION    = 'aqm_ff_location_whitelist';
     const PAGE_SLUG = 'aqm-ff-location-whitelist';
-    const VERSION   = '1.9.7';
+    const VERSION   = '1.9.8';
     private static $script_added = false;
 
     public function __construct() {
@@ -878,14 +878,24 @@ class AQM_Formidable_Location_Whitelist {
                     
                     if (empty($data['assets']) || count($data['assets']) === 0) {
                         error_log('AQM Plugin Update: No assets found in release');
+                    } else {
+                        error_log('AQM Plugin Update: Assets found but none matched aqm-formidable-zip-whitelist.zip');
+                        foreach ($data['assets'] as $asset) {
+                            error_log('AQM Plugin Update: Available asset: ' . (isset($asset['name']) ? $asset['name'] : 'unnamed'));
+                        }
                     }
                 } else {
-                    error_log('AQM Plugin Update: Release data does not contain assets array');
+                    error_log('AQM Plugin Update: Release data does not contain assets array. Available keys: ' . implode(', ', array_keys($data)));
                 }
+            } else {
+                $error_body = wp_remote_retrieve_body($response);
+                error_log('AQM Plugin Update: Failed to get release info. Response code: ' . $response_code . ', Body: ' . substr($error_body, 0, 500));
             }
+        } else {
+            error_log('AQM Plugin Update: Could not extract version from package URL: ' . $package);
         }
         
-        return new WP_Error('download_failed', 'Failed to download plugin update. Please check your GitHub token has access to the repository.');
+        return new WP_Error('download_failed', 'Failed to download plugin update. Please check your GitHub token has access to the repository and that the release contains a ZIP file.');
     }
 
     public function add_check_update_link($links, $file) {
