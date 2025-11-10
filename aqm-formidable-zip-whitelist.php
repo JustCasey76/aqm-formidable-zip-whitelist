@@ -2,23 +2,17 @@
 /**
  * Plugin Name: AQM Formidable ZIP & State Whitelist (Hardened)
  * Description: Server-side ZIP/State allowlist for Formidable Forms. Auto-detects ZIP/State fields; error color/size controls. Hardened against Unicode/invisible chars and double-enforced on create/update.
- * Version: 1.10.7
+ * Version: 1.10.8
  * Author: AQ Marketing (Justin Casey)
  * License: GPL-2.0+
  */
 
 if (!defined('ABSPATH')) exit;
 
-// GitHub Personal Access Token for private repository access
-// Replace 'YOUR_GITHUB_TOKEN_HERE' with your actual token
-if (!defined('AQM_GITHUB_TOKEN')) {
-    define('AQM_GITHUB_TOKEN', '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');
-}
-
 class AQM_Formidable_Location_Whitelist {
     const OPTION    = 'aqm_ff_location_whitelist';
     const PAGE_SLUG = 'aqm-ff-location-whitelist';
-    const VERSION   = '1.10.7';
+    const VERSION   = '1.10.8';
     private static $script_added = false;
 
     public function __construct() {
@@ -164,7 +158,6 @@ class AQM_Formidable_Location_Whitelist {
         $o['state_error_msg']=isset($in['state_error_msg'])&&$in['state_error_msg']!==''?wp_kses_post($in['state_error_msg']):$o['state_error_msg'];
         $c=isset($in['error_color'])?sanitize_hex_color($in['error_color']):''; $o['error_color']=$c?$c:'#C4042D';
         $s=isset($in['error_font_size'])?absint($in['error_font_size']):16; $o['error_font_size']=($s>=10&&$s<=40)?$s:16;
-        $o['github_token']=isset($in['github_token'])?trim($in['github_token']):'';
         return $o;
     }
 
@@ -264,7 +257,6 @@ class AQM_Formidable_Location_Whitelist {
             'enable_zip_validation'=>0,'allowed_zips'=>'','zip_error_msg'=>'Sorry, we don\'t service this ZIP.',
             'enable_state_validation'=>0,'allowed_states'=>'','state_error_msg'=>'Sorry, we only serve selected states.',
             'error_color'=>'#C4042D','error_font_size'=>16,
-            'github_token'=>'',
             '_version'=>self::VERSION,
         ];
     }
@@ -686,16 +678,8 @@ class AQM_Formidable_Location_Whitelist {
     }
 
     private function get_github_download_url($version) {
-        // For private repositories, we need to use an authenticated download URL
-        // WordPress will download this, but we need to provide a URL that includes the token
-        // We'll use a custom download handler that authenticates the request
-        $github_token = '';
-        if (defined('AQM_GITHUB_TOKEN') && !empty(AQM_GITHUB_TOKEN) && AQM_GITHUB_TOKEN !== 'YOUR_GITHUB_TOKEN_HERE') {
-            $github_token = trim(AQM_GITHUB_TOKEN);
-        }
-        
         // Return the direct GitHub release download URL
-        // We'll intercept the download via upgrader_pre_download filter to add authentication
+        // We'll intercept the download via upgrader_pre_download filter to get the correct asset URL
         return "https://github.com/JustCasey76/aqm-formidable-zip-whitelist/releases/download/v{$version}/aqm-formidable-zip-whitelist.zip";
     }
     
@@ -707,12 +691,7 @@ class AQM_Formidable_Location_Whitelist {
         
         error_log('AQM Plugin Update: Download handler triggered for package: ' . $package);
         
-        // Get GitHub token (optional for public repos)
-        $github_token = '';
-        if (defined('AQM_GITHUB_TOKEN') && !empty(AQM_GITHUB_TOKEN) && AQM_GITHUB_TOKEN !== 'YOUR_GITHUB_TOKEN_HERE') {
-            $github_token = trim(AQM_GITHUB_TOKEN);
-        }
-        
+        // Repository is public, so we don't need authentication
         // Extract version from package URL
         if (preg_match('/v([\d.]+)\/aqm-formidable-zip-whitelist\.zip$/', $package, $matches)) {
             $version = $matches[1];
@@ -724,17 +703,8 @@ class AQM_Formidable_Location_Whitelist {
                 'User-Agent' => 'WordPress/' . get_bloginfo('version'),
             ];
             
-            // Add authentication if token is available (for private repos or rate limiting)
-            if (!empty($github_token)) {
-                if (strpos($github_token, 'github_pat_') === 0) {
-                    $headers['Authorization'] = 'Bearer ' . $github_token;
-                } else {
-                    $headers['Authorization'] = 'token ' . $github_token;
-                }
-                error_log('AQM Plugin Update: Using authenticated API request with token');
-            } else {
-                error_log('AQM Plugin Update: Using unauthenticated API request (public repo)');
-            }
+            // Don't use authentication for public repos
+            error_log('AQM Plugin Update: Using unauthenticated API request (public repo)');
             
             $response = wp_remote_get($api_url, [
                 'timeout' => 15,
@@ -775,18 +745,13 @@ class AQM_Formidable_Location_Whitelist {
                         $asset = $matching_asset;
                         error_log('AQM Plugin Update: Found matching asset: ' . $asset['name'] . ' (ID: ' . (isset($asset['id']) ? $asset['id'] : 'N/A') . ')');
                         
-                        // For public repos, use browser_download_url directly (simpler and faster)
-                        // For private repos or if browser_download_url is not available, use asset ID endpoint
-                        if (isset($asset['browser_download_url']) && empty($github_token)) {
+                        // For public repos, always use browser_download_url (no authentication needed)
+                        if (isset($asset['browser_download_url'])) {
                             // Public repo - use direct download URL
                             $download_url = $asset['browser_download_url'];
-                            error_log('AQM Plugin Update: Using direct download URL for public repo');
-                        } elseif (isset($asset['id'])) {
-                            // Private repo or no browser_download_url - use asset ID endpoint
-                            $download_url = 'https://api.github.com/repos/JustCasey76/aqm-formidable-zip-whitelist/releases/assets/' . $asset['id'];
-                            error_log('AQM Plugin Update: Using asset ID endpoint (private repo or authenticated)');
+                            error_log('AQM Plugin Update: Using direct download URL for public repo: ' . $download_url);
                         } else {
-                            // Fallback to url field
+                            // Fallback to url field if browser_download_url is not available
                             $download_url = isset($asset['url']) ? $asset['url'] : '';
                             error_log('AQM Plugin Update: Using fallback URL from asset');
                         }
@@ -796,23 +761,13 @@ class AQM_Formidable_Location_Whitelist {
                         } else {
                             error_log('AQM Plugin Update: Download URL: ' . $download_url);
                             
-                            // Set up headers for binary download
+                            // Set up headers for binary download (no authentication for public repos)
                             $download_headers = [
                                 'Accept' => 'application/octet-stream',
                                 'User-Agent' => 'WordPress/' . get_bloginfo('version'),
                             ];
                             
-                            // Only add authentication if token is available and we're using API endpoint
-                            if (!empty($github_token) && strpos($download_url, '/releases/assets/') !== false) {
-                                if (strpos($github_token, 'github_pat_') === 0) {
-                                    $download_headers['Authorization'] = 'Bearer ' . $github_token;
-                                } else {
-                                    $download_headers['Authorization'] = 'token ' . $github_token;
-                                }
-                                error_log('AQM Plugin Update: Adding authentication header for download');
-                            } else {
-                                error_log('AQM Plugin Update: Downloading without authentication (public repo)');
-                            }
+                            error_log('AQM Plugin Update: Downloading without authentication (public repo)');
                             
                             // Create temp file path - ensure directory separator is correct
                             $temp_dir = get_temp_dir();
@@ -868,7 +823,7 @@ class AQM_Formidable_Location_Whitelist {
                                 } else {
                                     $error_body = wp_remote_retrieve_body($download_response);
                                     error_log('AQM Plugin Update: Download failed with code ' . $response_code . ': ' . substr($error_body, 0, 200));
-                                    return new WP_Error('download_failed', 'GitHub API returned error code ' . $response_code . '. Check token permissions.');
+                                    return new WP_Error('download_failed', 'Download failed with error code ' . $response_code . '.');
                                 }
                             } else {
                                 $error_message = $download_response->get_error_message();
@@ -896,18 +851,18 @@ class AQM_Formidable_Location_Whitelist {
                 $error_body = wp_remote_retrieve_body($response);
                 error_log('AQM Plugin Update: Failed to get release info. Response code: ' . $response_code . ', Body: ' . substr($error_body, 0, 500));
                 if ($response_code === 404) {
-                    return new WP_Error('release_not_found', 'Release v' . $version . ' not found. It may not exist yet or the token lacks access.');
+                    return new WP_Error('release_not_found', 'Release v' . $version . ' not found. It may not exist yet.');
                 } elseif ($response_code === 401) {
-                    return new WP_Error('unauthorized', 'GitHub API returned 401 Unauthorized. Check that your token has "repo" scope and access to the repository.');
+                    return new WP_Error('unauthorized', 'GitHub API returned 401 Unauthorized. This is unexpected for a public repository.');
                 } else {
-                    return new WP_Error('api_error', 'GitHub API error (code ' . $response_code . '). Check token and repository access.');
+                    return new WP_Error('api_error', 'GitHub API error (code ' . $response_code . ').');
                 }
             }
         } else {
             error_log('AQM Plugin Update: Could not extract version from package URL: ' . $package);
         }
         
-        return new WP_Error('download_failed', 'Failed to download plugin update. Please check your GitHub token has access to the repository and that the release contains a ZIP file.');
+        return new WP_Error('download_failed', 'Failed to download plugin update. Please check that the release contains a ZIP file.');
     }
 
     public function add_check_update_link($links, $file) {
