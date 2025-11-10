@@ -60,14 +60,13 @@ jobs:
           
           echo "File copied successfully, creating ZIP..."
           
-          # Create ZIP from the plugin directory (not root)
+          # Create ZIP from parent directory to preserve folder name
           # This ensures the ZIP contains: aqm-formidable-zip-whitelist/aqm-formidable-zip-whitelist.php
-          cd "$PLUGIN_DIR"
-          zip -r "../$ZIP_NAME" . || {
+          # WordPress needs the folder name to match exactly for updates to work
+          zip -r "$ZIP_NAME" "$PLUGIN_DIR" || {
             echo "ERROR: zip command failed!"
             exit 1
           }
-          cd ..
           
           # Verify ZIP was created
           if [ ! -f "$ZIP_NAME" ]; then
@@ -77,11 +76,18 @@ jobs:
           
           # Show ZIP contents for verification
           echo "Created $ZIP_NAME with proper WordPress plugin structure"
-          echo "ZIP contents:"
-          unzip -l "$ZIP_NAME" || {
-            echo "ERROR: Failed to list ZIP contents!"
+          echo "ZIP contents (first 20 lines):"
+          unzip -l "$ZIP_NAME" | head -20
+          echo ""
+          echo "Verifying folder structure:"
+          if unzip -l "$ZIP_NAME" | grep -q "aqm-formidable-zip-whitelist/aqm-formidable-zip-whitelist.php"; then
+            echo "✓ Correct structure: aqm-formidable-zip-whitelist/aqm-formidable-zip-whitelist.php"
+          else
+            echo "ERROR: ZIP structure verification failed!"
+            echo "Full ZIP contents:"
+            unzip -l "$ZIP_NAME"
             exit 1
-          }
+          fi
           ls -lh "$ZIP_NAME"
       
       - name: Create Release
