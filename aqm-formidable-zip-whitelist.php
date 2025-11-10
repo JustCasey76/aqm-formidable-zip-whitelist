@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AQM Formidable ZIP & State Whitelist (Hardened)
  * Description: Server-side ZIP/State allowlist for Formidable Forms. Auto-detects ZIP/State fields; error color/size controls. Hardened against Unicode/invisible chars and double-enforced on create/update.
- * Version: 1.9.3
+ * Version: 1.9.4
  * Author: AQ Marketing (Justin Casey)
  * License: GPL-2.0+
  */
@@ -18,7 +18,7 @@ if (!defined('AQM_GITHUB_TOKEN')) {
 class AQM_Formidable_Location_Whitelist {
     const OPTION    = 'aqm_ff_location_whitelist';
     const PAGE_SLUG = 'aqm-ff-location-whitelist';
-    const VERSION   = '1.9.3';
+    const VERSION   = '1.9.4';
     private static $script_added = false;
 
     public function __construct() {
@@ -149,21 +149,6 @@ class AQM_Formidable_Location_Whitelist {
             printf('<input type="number" name="%s[error_font_size]" value="%s" min="10" max="40" step="1" />',esc_attr(self::OPTION),esc_attr($o['error_font_size']));
             echo '<p class="description">Set the font size for error messages (10-40 pixels).</p>';
         },self::OPTION,'aqm_section_style');
-        
-        // GitHub Update Settings
-        add_settings_section('github_updates','GitHub Updates',function(){
-            $has_token = defined('AQM_GITHUB_TOKEN') && !empty(AQM_GITHUB_TOKEN) && AQM_GITHUB_TOKEN !== 'YOUR_GITHUB_TOKEN_HERE';
-            if ($has_token) {
-                $masked = substr(AQM_GITHUB_TOKEN, 0, 4) . str_repeat('*', max(0, strlen(AQM_GITHUB_TOKEN) - 8)) . substr(AQM_GITHUB_TOKEN, -4);
-                echo '<p style="color: #00a32a;"><strong>✓ GitHub token is configured</strong></p>';
-                echo '<p style="color: #646970;">Token: <code>' . esc_html($masked) . '</code></p>';
-                echo '<p class="description">The token is automatically loaded from the plugin file. To change it, edit <code>AQM_GITHUB_TOKEN</code> in the plugin file.</p>';
-            } else {
-                echo '<p style="color: #d63638;"><strong>⚠ GitHub token not configured</strong></p>';
-                echo '<p>To enable update checking for your private repository, edit the plugin file and replace <code>YOUR_GITHUB_TOKEN_HERE</code> with your actual GitHub Personal Access Token.</p>';
-                echo '<p class="description">Create a token at <a href="https://github.com/settings/tokens" target="_blank">GitHub Settings → Developer settings → Personal access tokens</a> with <code>repo</code> scope.</p>';
-            }
-        },self::OPTION);
     }
 
     public function sanitize($in) {
