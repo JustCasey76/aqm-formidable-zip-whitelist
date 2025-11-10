@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AQM Formidable ZIP & State Whitelist (Hardened)
  * Description: Server-side ZIP/State allowlist for Formidable Forms. Auto-detects ZIP/State fields; error color/size controls. Hardened against Unicode/invisible chars and double-enforced on create/update.
- * Version: 1.8.3
+ * Version: 1.8.4
  * Author: AQ Marketing (Justin Casey)
  * License: GPL-2.0+
  */
@@ -12,7 +12,7 @@ if (!defined('ABSPATH')) exit;
 class AQM_Formidable_Location_Whitelist {
     const OPTION    = 'aqm_ff_location_whitelist';
     const PAGE_SLUG = 'aqm-ff-location-whitelist';
-    const VERSION   = '1.8.3';
+    const VERSION   = '1.8.4';
 
     public function __construct() {
         // Run migration on plugin load
@@ -29,6 +29,10 @@ class AQM_Formidable_Location_Whitelist {
         // Extra enforcement
         add_action('frm_before_create_entry', [$this, 'enforce_or_die'], 10, 2);
         add_action('frm_before_update_entry', [$this, 'enforce_or_die'], 10, 2);
+
+        // GitHub update checker
+        add_filter('pre_set_site_transient_update_plugins', [$this, 'check_for_updates']);
+        add_filter('plugins_api', [$this, 'plugin_info'], 10, 3);
     }
 
     /* ---------------- Admin UI ---------------- */
@@ -466,6 +470,83 @@ class AQM_Formidable_Location_Whitelist {
         'SC'=>'SC','SD'=>'SD','TN'=>'TN','TX'=>'TX','UT'=>'UT','VT'=>'VT','VA'=>'VA','WA'=>'WA','WV'=>'WV','WI'=>'WI','WY'=>'WY','PR'=>'PR','GU'=>'GU',
         'AS'=>'AS','MP'=>'MP','VI'=>'VI'
     ]; }
+
+    /* ---------------- GitHub Update Checker ---------------- */
+
+    public function check_for_updates($transient) {
+        if (empty($transient->checked)) return $transient;
+        
+        $plugin_file = plugin_basename(__FILE__);
+        $current_version = self::VERSION;
+        
+        // Check GitHub for latest release
+        $latest_version = $this->get_latest_github_version();
+        
+        if ($latest_version && version_compare($current_version, $latest_version, '<')) {
+            $transient->response[$plugin_file] = (object) [
+                'slug' => 'aqm-formidable-zip-whitelist',
+                'plugin' => $plugin_file,
+                'new_version' => $latest_version,
+                'url' => 'https://github.com/JustCasey76/aqm-formidable-zip-whitelist',
+                'package' => $this->get_github_download_url($latest_version),
+            ];
+        }
+        
+        return $transient;
+    }
+
+    public function plugin_info($false, $action, $response) {
+        if ($action !== 'plugin_information' || $response->slug !== 'aqm-formidable-zip-whitelist') {
+            return $false;
+        }
+        
+        $latest_version = $this->get_latest_github_version();
+        
+        $response->name = 'AQM Formidable ZIP & State Whitelist (Hardened)';
+        $response->version = $latest_version ?: self::VERSION;
+        $response->download_link = $latest_version ? $this->get_github_download_url($latest_version) : '';
+        $response->sections = [
+            'description' => 'Server-side ZIP/State allowlist for Formidable Forms. Auto-detects location fields, validates submissions, and blocks unauthorized locations with hardened security.',
+        ];
+        
+        return $response;
+    }
+
+    private function get_latest_github_version() {
+        $cache_key = 'aqm_ff_whitelist_latest_version';
+        $cached = get_transient($cache_key);
+        
+        if ($cached !== false) {
+            return $cached;
+        }
+        
+        $api_url = 'https://api.github.com/repos/JustCasey76/aqm-formidable-zip-whitelist/releases/latest';
+        $response = wp_remote_get($api_url, [
+            'timeout' => 10,
+            'headers' => [
+                'Accept' => 'application/vnd.github.v3+json',
+            ],
+        ]);
+        
+        if (is_wp_error($response)) {
+            return false;
+        }
+        
+        $body = wp_remote_retrieve_body($response);
+        $data = json_decode($body, true);
+        
+        if (isset($data['tag_name'])) {
+            $version = ltrim($data['tag_name'], 'v'); // Remove 'v' prefix if present
+            set_transient($cache_key, $version, 12 * HOUR_IN_SECONDS); // Cache for 12 hours
+            return $version;
+        }
+        
+        return false;
+    }
+
+    private function get_github_download_url($version) {
+        return "https://github.com/JustCasey76/aqm-formidable-zip-whitelist/releases/download/v{$version}/aqm-formidable-zip-whitelist.zip";
+    }
 }
 
 new AQM_Formidable_Location_Whitelist();
