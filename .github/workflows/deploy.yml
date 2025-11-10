@@ -1,0 +1,43 @@
+name: Deploy Plugin
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        
+      - name: Create deployment package
+        run: |
+          mkdir -p deploy
+          cp aqm-formidable-zip-whitelist.php deploy/
+          cd deploy
+          zip -r ../aqm-formidable-zip-whitelist.zip .
+          cd ..
+          
+      - name: Create Release (on tag)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: aqm-formidable-zip-whitelist.zip
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: plugin-package
+          path: aqm-formidable-zip-whitelist.zip
+          retention-days: 30
+

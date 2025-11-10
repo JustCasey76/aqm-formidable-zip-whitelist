@@ -1,0 +1,40 @@
+# WordPress
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.sublime-project
+*.sublime-workspace
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+
+# Temporary files
+*.tmp
+*.temp
+*~
+
+# WordPress specific
+wp-config.php
+.htaccess
+
+# Node modules (if using build tools)
+node_modules/
+package-lock.json
+
+# Build files
+dist/
+build/
+
