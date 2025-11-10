@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AQM Formidable ZIP & State Whitelist (Hardened)
  * Description: Server-side ZIP/State allowlist for Formidable Forms. Auto-detects ZIP/State fields; error color/size controls. Hardened against Unicode/invisible chars and double-enforced on create/update.
- * Version: 1.10.2
+ * Version: 1.10.3
  * Author: AQ Marketing (Justin Casey)
  * License: GPL-2.0+
  */
@@ -18,7 +18,7 @@ if (!defined('AQM_GITHUB_TOKEN')) {
 class AQM_Formidable_Location_Whitelist {
     const OPTION    = 'aqm_ff_location_whitelist';
     const PAGE_SLUG = 'aqm-ff-location-whitelist';
-    const VERSION   = '1.10.2';
+    const VERSION   = '1.10.3';
     private static $script_added = false;
 
     public function __construct() {
@@ -767,18 +767,11 @@ class AQM_Formidable_Location_Whitelist {
         
         error_log('AQM Plugin Update: Download handler triggered for package: ' . $package);
         
-        // Get GitHub token
+        // Get GitHub token (optional for public repos)
         $github_token = '';
         if (defined('AQM_GITHUB_TOKEN') && !empty(AQM_GITHUB_TOKEN) && AQM_GITHUB_TOKEN !== 'YOUR_GITHUB_TOKEN_HERE') {
             $github_token = trim(AQM_GITHUB_TOKEN);
         }
-        
-        if (empty($github_token)) {
-            error_log('AQM Plugin Update: No GitHub token found, falling back to default download');
-            return $reply; // No token, let WordPress handle normally
-        }
-        
-        error_log('AQM Plugin Update: Using authenticated download with token');
         
         // Extract version from package URL
         if (preg_match('/v([\d.]+)\/aqm-formidable-zip-whitelist\.zip$/', $package, $matches)) {
@@ -791,10 +784,16 @@ class AQM_Formidable_Location_Whitelist {
                 'User-Agent' => 'WordPress/' . get_bloginfo('version'),
             ];
             
-            if (strpos($github_token, 'github_pat_') === 0) {
-                $headers['Authorization'] = 'Bearer ' . $github_token;
+            // Add authentication if token is available (for private repos or rate limiting)
+            if (!empty($github_token)) {
+                if (strpos($github_token, 'github_pat_') === 0) {
+                    $headers['Authorization'] = 'Bearer ' . $github_token;
+                } else {
+                    $headers['Authorization'] = 'token ' . $github_token;
+                }
+                error_log('AQM Plugin Update: Using authenticated API request with token');
             } else {
-                $headers['Authorization'] = 'token ' . $github_token;
+                error_log('AQM Plugin Update: Using unauthenticated API request (public repo)');
             }
             
             $response = wp_remote_get($api_url, [
@@ -836,12 +835,20 @@ class AQM_Formidable_Location_Whitelist {
                         $asset = $matching_asset;
                         error_log('AQM Plugin Update: Found matching asset: ' . $asset['name'] . ' (ID: ' . (isset($asset['id']) ? $asset['id'] : 'N/A') . ')');
                         
-                        // Use the asset ID endpoint for authenticated downloads (required for private repos)
-                        if (isset($asset['id'])) {
+                        // For public repos, use browser_download_url directly (simpler and faster)
+                        // For private repos or if browser_download_url is not available, use asset ID endpoint
+                        if (isset($asset['browser_download_url']) && empty($github_token)) {
+                            // Public repo - use direct download URL
+                            $download_url = $asset['browser_download_url'];
+                            error_log('AQM Plugin Update: Using direct download URL for public repo');
+                        } elseif (isset($asset['id'])) {
+                            // Private repo or no browser_download_url - use asset ID endpoint
                             $download_url = 'https://api.github.com/repos/JustCasey76/aqm-formidable-zip-whitelist/releases/assets/' . $asset['id'];
+                            error_log('AQM Plugin Update: Using asset ID endpoint (private repo or authenticated)');
                         } else {
-                            // Fallback to browser_download_url or url
-                            $download_url = isset($asset['browser_download_url']) ? $asset['browser_download_url'] : (isset($asset['url']) ? $asset['url'] : '');
+                            // Fallback to url field
+                            $download_url = isset($asset['url']) ? $asset['url'] : '';
+                            error_log('AQM Plugin Update: Using fallback URL from asset');
                         }
                         
                         if (empty($download_url)) {
@@ -855,10 +862,16 @@ class AQM_Formidable_Location_Whitelist {
                                 'User-Agent' => 'WordPress/' . get_bloginfo('version'),
                             ];
                             
-                            if (strpos($github_token, 'github_pat_') === 0) {
-                                $download_headers['Authorization'] = 'Bearer ' . $github_token;
+                            // Only add authentication if token is available and we're using API endpoint
+                            if (!empty($github_token) && strpos($download_url, '/releases/assets/') !== false) {
+                                if (strpos($github_token, 'github_pat_') === 0) {
+                                    $download_headers['Authorization'] = 'Bearer ' . $github_token;
+                                } else {
+                                    $download_headers['Authorization'] = 'token ' . $github_token;
+                                }
+                                error_log('AQM Plugin Update: Adding authentication header for download');
                             } else {
-                                $download_headers['Authorization'] = 'token ' . $github_token;
+                                error_log('AQM Plugin Update: Downloading without authentication (public repo)');
                             }
                             
                             // Create temp file path - ensure directory separator is correct
