@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AQM Formidable ZIP & State Whitelist (Hardened)
  * Description: Server-side ZIP/State allowlist for Formidable Forms. Auto-detects ZIP/State fields; error color/size controls. Hardened against Unicode/invisible chars and double-enforced on create/update.
- * Version: 1.9.5
+ * Version: 1.9.6
  * Author: AQ Marketing (Justin Casey)
  * License: GPL-2.0+
  */
@@ -18,7 +18,7 @@ if (!defined('AQM_GITHUB_TOKEN')) {
 class AQM_Formidable_Location_Whitelist {
     const OPTION    = 'aqm_ff_location_whitelist';
     const PAGE_SLUG = 'aqm-ff-location-whitelist';
-    const VERSION   = '1.9.5';
+    const VERSION   = '1.9.6';
     private static $script_added = false;
 
     public function __construct() {
