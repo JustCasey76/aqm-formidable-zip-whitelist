@@ -40,6 +40,8 @@ class AQM_Formidable_Location_Whitelist {
         add_action('load-update-core.php', [$this, 'clear_update_cache']);
         add_filter('plugin_row_meta', [$this, 'add_check_update_link'], 10, 2);
         add_action('wp_ajax_aqm_check_plugin_update', [$this, 'ajax_check_update']);
+        // Clear update cache after plugin update completes
+        add_action('upgrader_process_complete', [$this, 'clear_cache_after_update'], 10, 2);
         // Custom download handler for private repositories
         // Use priority 1 to ensure we intercept before WordPress tries to download
         add_filter('upgrader_pre_download', [$this, 'handle_private_repo_download'], 1, 3);
@@ -584,6 +586,19 @@ class AQM_Formidable_Location_Whitelist {
         if ($transient && isset($transient->response[plugin_basename(__FILE__)])) {
             unset($transient->response[plugin_basename(__FILE__)]);
             set_site_transient('update_plugins', $transient);
+        }
+    }
+    
+    /**
+     * Clear update cache after plugin update completes
+     */
+    public function clear_cache_after_update($upgrader, $hook_extra) {
+        // Only clear cache if this plugin was updated
+        if (isset($hook_extra['plugin']) && $hook_extra['plugin'] === plugin_basename(__FILE__)) {
+            error_log('AQM Plugin Update: Update completed, clearing cache...');
+            $this->clear_update_cache();
+            // Also delete the entire update_plugins transient to force fresh check
+            delete_site_transient('update_plugins');
         }
     }
 
