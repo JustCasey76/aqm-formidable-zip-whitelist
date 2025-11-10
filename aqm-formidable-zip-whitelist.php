@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AQM Formidable ZIP & State Whitelist (Hardened)
  * Description: Server-side ZIP/State allowlist for Formidable Forms. Auto-detects ZIP/State fields; error color/size controls. Hardened against Unicode/invisible chars and double-enforced on create/update.
- * Version: 1.8.7
+ * Version: 1.8.8
  * Author: AQ Marketing (Justin Casey)
  * License: GPL-2.0+
  */
@@ -12,7 +12,7 @@ if (!defined('ABSPATH')) exit;
 class AQM_Formidable_Location_Whitelist {
     const OPTION    = 'aqm_ff_location_whitelist';
     const PAGE_SLUG = 'aqm-ff-location-whitelist';
-    const VERSION   = '1.8.7';
+    const VERSION   = '1.8.8';
     private static $script_added = false;
 
     public function __construct() {
@@ -529,7 +529,7 @@ class AQM_Formidable_Location_Whitelist {
         return $response;
     }
 
-    private function get_latest_github_version($force_fresh = false) {
+    private function get_latest_github_version($force_fresh = false, &$error_info = null) {
         $cache_key = 'aqm_ff_whitelist_latest_version';
         
         // Check if we're on the updates page - if so, reduce cache time for faster detection
@@ -543,6 +543,9 @@ class AQM_Formidable_Location_Whitelist {
         
         // If forcing fresh check or on update page, always check fresh. Otherwise use cache.
         if ($cached !== false && !$is_update_page && !$force_fresh) {
+            if ($error_info !== null) {
+                $error_info = ['type' => 'cached', 'version' => $cached];
+            }
             return $cached;
         }
         
@@ -557,7 +560,15 @@ class AQM_Formidable_Location_Whitelist {
         
         if (is_wp_error($response)) {
             $error_message = $response->get_error_message();
-            error_log('AQM Plugin Update Check: GitHub API error - ' . $error_message);
+            $error_code = $response->get_error_code();
+            error_log('AQM Plugin Update Check: GitHub API error - ' . $error_code . ': ' . $error_message);
+            if ($error_info !== null) {
+                $error_info = [
+                    'type' => 'wp_error',
+                    'code' => $error_code,
+                    'message' => $error_message,
+                ];
+            }
             // Return cached version if API fails (better than nothing)
             return $cached !== false ? $cached : false;
         }
@@ -565,21 +576,57 @@ class AQM_Formidable_Location_Whitelist {
         $response_code = wp_remote_retrieve_response_code($response);
         if ($response_code !== 200) {
             $body = wp_remote_retrieve_body($response);
-            error_log('AQM Plugin Update Check: GitHub API returned code ' . $response_code . ' - ' . substr($body, 0, 200));
+            $error_body = substr($body, 0, 500);
+            error_log('AQM Plugin Update Check: GitHub API returned code ' . $response_code . ' - ' . $error_body);
+            if ($error_info !== null) {
+                $error_info = [
+                    'type' => 'http_error',
+                    'code' => $response_code,
+                    'body' => $error_body,
+                ];
+            }
             return $cached !== false ? $cached : false;
         }
         
         $body = wp_remote_retrieve_body($response);
         $data = json_decode($body, true);
         
-        if (isset($data['tag_name'])) {
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            error_log('AQM Plugin Update Check: JSON decode error - ' . json_last_error_msg());
+            if ($error_info !== null) {
+                $error_info = [
+                    'type' => 'json_error',
+                    'message' => json_last_error_msg(),
+                    'body_preview' => substr($body, 0, 500),
+                ];
+            }
+            return $cached !== false ? $cached : false;
+        }
+        
+        if (isset($data['tag_name']) && !empty($data['tag_name'])) {
             $version = ltrim($data['tag_name'], 'v'); // Remove 'v' prefix if present
             set_transient($cache_key, $version, $cache_time);
             return $version;
         }
         
-        // Log if tag_name is missing
-        error_log('AQM Plugin Update Check: GitHub API response missing tag_name. Response: ' . substr($body, 0, 500));
+        // Log if tag_name is missing - this is the most likely scenario
+        $debug_body = substr($body, 0, 1000);
+        $response_keys = isset($data) && is_array($data) ? array_keys($data) : [];
+        error_log('AQM Plugin Update Check: GitHub API response missing tag_name. Response code: ' . $response_code . ' | Keys: ' . implode(', ', $response_keys) . ' | Response: ' . $debug_body);
+        
+        // Always set error_info if it was passed by reference
+        if ($error_info !== null) {
+            $error_info = [
+                'type' => 'missing_tag',
+                'response_keys' => $response_keys,
+                'body_preview' => $debug_body,
+                'has_data' => isset($data) && is_array($data),
+                'data_type' => gettype($data),
+                'response_code' => $response_code,
+                'tag_name_exists' => isset($data['tag_name']),
+                'tag_name_value' => isset($data['tag_name']) ? $data['tag_name'] : 'NOT_SET',
+            ];
+        }
         
         return false;
     }
@@ -697,7 +744,8 @@ class AQM_Formidable_Location_Whitelist {
         }
         
         // Force fresh check
-        $latest_version = $this->get_latest_github_version(true);
+        $error_info = null;
+        $latest_version = $this->get_latest_github_version(true, $error_info);
         $current_version = self::VERSION;
         
         // Debug info
@@ -705,6 +753,7 @@ class AQM_Formidable_Location_Whitelist {
             'current_version' => $current_version,
             'latest_version' => $latest_version,
             'version_compare' => $latest_version ? version_compare($current_version, $latest_version, '<') : false,
+            'error_info' => $error_info,
         ];
         
         if ($latest_version && version_compare($current_version, $latest_version, '<')) {
