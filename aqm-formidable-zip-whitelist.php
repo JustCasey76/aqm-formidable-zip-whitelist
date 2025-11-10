@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AQM Formidable ZIP & State Whitelist (Hardened)
  * Description: Server-side ZIP/State allowlist for Formidable Forms. Auto-detects ZIP/State fields; error color/size controls. Hardened against Unicode/invisible chars and double-enforced on create/update.
- * Version: 1.8.2
+ * Version: 1.8.3
  * Author: AQ Marketing (Justin Casey)
  * License: GPL-2.0+
  */
@@ -12,7 +12,7 @@ if (!defined('ABSPATH')) exit;
 class AQM_Formidable_Location_Whitelist {
     const OPTION    = 'aqm_ff_location_whitelist';
     const PAGE_SLUG = 'aqm-ff-location-whitelist';
-    const VERSION   = '1.8.2';
+    const VERSION   = '1.8.3';
 
     public function __construct() {
         // Run migration on plugin load
@@ -89,9 +89,9 @@ class AQM_Formidable_Location_Whitelist {
 
         add_settings_field('allowed_zips','Allowed ZIP Codes',function(){
             $o=$this->get_options();
-            printf('<textarea name="%s[allowed_zips]" rows="8" class="large-text code" placeholder="One per line (12345 or 12345-6789)">%s</textarea>',
+            printf('<textarea name="%s[allowed_zips]" rows="8" class="large-text code" placeholder="One per line or comma-separated (12345 or 12345-6789)">%s</textarea>',
                 esc_attr(self::OPTION),esc_textarea($o['allowed_zips']));
-            echo '<p class="description">Enter one ZIP code per line. Supports 5-digit (12345) and extended format (12345-6789).</p>';
+            echo '<p class="description">Enter ZIP codes one per line or comma-separated. Supports 5-digit (12345) and extended format (12345-6789). Examples: "12345, 02134, 12345-6789" or one per line.</p>';
         },self::OPTION,'aqm_section_zip');
 
         add_settings_field('zip_error_msg','ZIP Error Message',function(){
@@ -151,7 +151,23 @@ class AQM_Formidable_Location_Whitelist {
         return $o;
     }
 
-    private function normalize_zip_list($raw){$lines=preg_split('/\R+/',(string)$raw); $out=[]; foreach($lines as $l){$z=strtoupper(trim($l)); if($z!=='' && preg_match('/^\d{5}(-\d{4})?$/',$z)) $out[]=$z;} return implode("\n",array_values(array_unique($out))); }
+    private function normalize_zip_list($raw){
+        $raw = (string)$raw;
+        $out = [];
+        // Split by newlines first, then by commas within each line
+        $lines = preg_split('/\R+/', $raw);
+        foreach($lines as $line){
+            // Also split by commas to handle comma-separated values
+            $items = preg_split('/\s*,\s*/', $line);
+            foreach($items as $item){
+                $z = strtoupper(trim($item));
+                if($z !== '' && preg_match('/^\d{5}(-\d{4})?$/', $z)){
+                    $out[] = $z;
+                }
+            }
+        }
+        return implode("\n", array_values(array_unique($out)));
+    }
     private function normalize_state_list($raw){$map=$this->us_state_name_to_code_map(); $codes=[]; foreach(preg_split('/\s*,\s*/',(string)$raw) as $t){$t=strtoupper(trim($t)); if($t==='')continue; $codes[] = isset($map[$t])?$map[$t]:(preg_match('/^[A-Z]{2}$/',$t)&&in_array($t,$map,true)?$t:'');} return implode(', ',array_values(array_unique(array_filter($codes))));}
 
     public function settings_page() {
