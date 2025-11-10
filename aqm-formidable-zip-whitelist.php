@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AQM Formidable ZIP & State Whitelist (Hardened)
  * Description: Server-side ZIP/State allowlist for Formidable Forms. Auto-detects ZIP/State fields; error color/size controls. Hardened against Unicode/invisible chars and double-enforced on create/update.
- * Version: 1.10.9
+ * Version: 1.10.10
  * Author: AQ Marketing (Justin Casey)
  * License: GPL-2.0+
  */
@@ -12,7 +12,7 @@ if (!defined('ABSPATH')) exit;
 class AQM_Formidable_Location_Whitelist {
     const OPTION    = 'aqm_ff_location_whitelist';
     const PAGE_SLUG = 'aqm-ff-location-whitelist';
-    const VERSION   = '1.10.9';
+    const VERSION   = '1.10.10';
     private static $script_added = false;
 
     public function __construct() {
@@ -832,15 +832,86 @@ class AQM_Formidable_Location_Whitelist {
                             }
                         }
                     } else {
+                        // No matching asset found - try fallback to direct download URL
                         if (empty($data['assets']) || count($data['assets']) === 0) {
-                            error_log('AQM Plugin Update: No assets found in release');
-                            return new WP_Error('no_assets', 'Release found but contains no assets. The GitHub Actions workflow may not have uploaded the ZIP file yet.');
+                            error_log('AQM Plugin Update: No assets found in release, trying direct download URL');
                         } else {
-                            error_log('AQM Plugin Update: Assets found but none are ZIP files');
+                            error_log('AQM Plugin Update: Assets found but none matched. Available assets:');
                             foreach ($data['assets'] as $asset) {
                                 error_log('AQM Plugin Update: Available asset: ' . (isset($asset['name']) ? $asset['name'] : 'unnamed'));
                             }
-                            return new WP_Error('no_zip_asset', 'Release found but no ZIP file asset available. Available assets logged.');
+                            error_log('AQM Plugin Update: Trying direct download URL as fallback');
+                        }
+                        
+                        // Fallback: Use direct download URL (works for public repos)
+                        $fallback_url = "https://github.com/JustCasey76/aqm-formidable-zip-whitelist/releases/download/v{$version}/aqm-formidable-zip-whitelist.zip";
+                        error_log('AQM Plugin Update: Using fallback direct download URL: ' . $fallback_url);
+                        
+                        // Set up headers for binary download
+                        $download_headers = [
+                            'Accept' => 'application/octet-stream',
+                            'User-Agent' => 'WordPress/' . get_bloginfo('version'),
+                        ];
+                        
+                        // Create temp file path
+                        $temp_dir = get_temp_dir();
+                        if (!is_dir($temp_dir)) {
+                            error_log('AQM Plugin Update: Temp directory does not exist: ' . $temp_dir);
+                            return new WP_Error('temp_dir_missing', 'Temporary directory does not exist: ' . $temp_dir);
+                        }
+                        
+                        $file_path = trailingslashit($temp_dir) . 'aqm-formidable-zip-whitelist-' . $version . '-' . time() . '.zip';
+                        error_log('AQM Plugin Update: Target file path: ' . $file_path);
+                        
+                        // Try downloading from fallback URL
+                        $download_response = wp_remote_get($fallback_url, [
+                            'timeout' => 300,
+                            'headers' => $download_headers,
+                            'stream' => false,
+                        ]);
+                        
+                        if (!is_wp_error($download_response)) {
+                            $response_code = wp_remote_retrieve_response_code($download_response);
+                            error_log('AQM Plugin Update: Fallback download response code: ' . $response_code);
+                            
+                            if ($response_code === 200) {
+                                $file_content = wp_remote_retrieve_body($download_response);
+                                $content_size = strlen($file_content);
+                                error_log('AQM Plugin Update: Downloaded ' . $content_size . ' bytes from fallback URL');
+                                
+                                if ($content_size > 0) {
+                                    $bytes_written = file_put_contents($file_path, $file_content);
+                                    if ($bytes_written !== false) {
+                                        $file_size = filesize($file_path);
+                                        if ($file_size > 0 && $file_size === $content_size) {
+                                            error_log('AQM Plugin Update: Successfully saved to ' . $file_path . ' (' . $file_size . ' bytes)');
+                                            if (is_readable($file_path)) {
+                                                return $file_path;
+                                            } else {
+                                                error_log('AQM Plugin Update: File saved but is not readable');
+                                                return new WP_Error('file_not_readable', 'Downloaded file is not readable: ' . $file_path);
+                                            }
+                                        } else {
+                                            error_log('AQM Plugin Update: File size mismatch. Expected: ' . $content_size . ', Got: ' . $file_size);
+                                            return new WP_Error('file_size_mismatch', 'Downloaded file size does not match expected size.');
+                                        }
+                                    } else {
+                                        error_log('AQM Plugin Update: Failed to write file to ' . $file_path);
+                                        return new WP_Error('file_write_failed', 'Failed to write downloaded file. Check directory permissions.');
+                                    }
+                                } else {
+                                    error_log('AQM Plugin Update: Downloaded content is empty');
+                                    return new WP_Error('empty_download', 'Downloaded file is empty.');
+                                }
+                            } else {
+                                $error_body = wp_remote_retrieve_body($download_response);
+                                error_log('AQM Plugin Update: Fallback download failed with code ' . $response_code . ': ' . substr($error_body, 0, 200));
+                                return new WP_Error('download_failed', 'Fallback download failed with error code ' . $response_code . '. The release may not have a ZIP file yet.');
+                            }
+                        } else {
+                            $error_message = $download_response->get_error_message();
+                            error_log('AQM Plugin Update: Fallback download error: ' . $error_message);
+                            return new WP_Error('download_error', 'Fallback download failed: ' . $error_message);
                         }
                     }
                 } else {
