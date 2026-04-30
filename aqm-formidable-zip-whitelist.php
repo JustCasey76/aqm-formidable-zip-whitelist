@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AQM Formidable ZIP & State Whitelist (Hardened)
  * Description: Server-side ZIP/State allowlist for Formidable Forms. Auto-detects ZIP/State fields; error color/size controls. Hardened against Unicode/invisible chars and double-enforced on create/update.
- * Version: 1.10.29
+ * Version: 1.10.30
  * Author: AQ Marketing (Justin Casey)
  * License: GPL-2.0+
  */
@@ -504,7 +504,7 @@ class AQM_Formidable_Location_Whitelist {
                     'slug' => 'aqm-formidable-zip-whitelist',
                     'plugin' => $plugin_file,
                     'new_version' => $latest_version,
-                    'url' => 'https://github.com/JustCasey76/aqm-formidable-zip-whitelist',
+                    'url' => 'https://github.com/AQ-Marketing/aqm-formidable-zip-whitelist',
                     'package' => $this->get_github_download_url($latest_version),
                     'id' => $plugin_file,
                     'tested' => get_bloginfo('version'),
@@ -530,7 +530,7 @@ class AQM_Formidable_Location_Whitelist {
      */
     private function verify_release_exists($version) {
         // Try with 'v' prefix first
-        $api_url = 'https://api.github.com/repos/JustCasey76/aqm-formidable-zip-whitelist/releases/tags/v' . $version;
+        $api_url = 'https://api.github.com/repos/AQ-Marketing/aqm-formidable-zip-whitelist/releases/tags/v' . $version;
         $headers = [
             'Accept' => 'application/vnd.github.v3+json',
             'User-Agent' => 'WordPress/' . get_bloginfo('version'),
@@ -545,7 +545,7 @@ class AQM_Formidable_Location_Whitelist {
         if (!is_wp_error($response)) {
             $response_code = wp_remote_retrieve_response_code($response);
             if ($response_code === 404) {
-                $api_url = 'https://api.github.com/repos/JustCasey76/aqm-formidable-zip-whitelist/releases/tags/' . $version;
+                $api_url = 'https://api.github.com/repos/AQ-Marketing/aqm-formidable-zip-whitelist/releases/tags/' . $version;
                 $response = wp_remote_get($api_url, [
                     'timeout' => 10,
                     'headers' => $headers,
@@ -639,7 +639,7 @@ class AQM_Formidable_Location_Whitelist {
         
         // Repository is public, so we don't need authentication
         // Skip token authentication to avoid 401 errors with invalid/expired tokens
-        $api_url = 'https://api.github.com/repos/JustCasey76/aqm-formidable-zip-whitelist/releases';
+        $api_url = 'https://api.github.com/repos/AQ-Marketing/aqm-formidable-zip-whitelist/releases';
         $headers = [
             'Accept' => 'application/vnd.github.v3+json',
             'User-Agent' => 'WordPress/' . get_bloginfo('version'),
@@ -765,7 +765,7 @@ class AQM_Formidable_Location_Whitelist {
     private function get_github_download_url($version) {
         // Return the direct GitHub release download URL
         // We'll intercept the download via upgrader_pre_download filter to get the correct asset URL
-        return "https://github.com/JustCasey76/aqm-formidable-zip-whitelist/releases/download/v{$version}/aqm-formidable-zip-whitelist.zip";
+        return "https://github.com/AQ-Marketing/aqm-formidable-zip-whitelist/releases/download/v{$version}/aqm-formidable-zip-whitelist.zip";
     }
     
     public function handle_private_repo_download($reply, $package, $upgrader) {
@@ -810,7 +810,7 @@ class AQM_Formidable_Location_Whitelist {
             
             // Get the release assets from GitHub API to find the correct download URL
             // Try with 'v' prefix first, then without if that fails
-            $api_url = 'https://api.github.com/repos/JustCasey76/aqm-formidable-zip-whitelist/releases/tags/v' . $version;
+            $api_url = 'https://api.github.com/repos/AQ-Marketing/aqm-formidable-zip-whitelist/releases/tags/v' . $version;
             error_log('AQM Plugin Update: API URL: ' . $api_url);
             
             $headers = [
@@ -843,7 +843,7 @@ class AQM_Formidable_Location_Whitelist {
             // If 404, try without 'v' prefix
             if ($response_code === 404) {
                 error_log('AQM Plugin Update: Tag with "v" prefix not found, trying without prefix...');
-                $api_url_no_v = 'https://api.github.com/repos/JustCasey76/aqm-formidable-zip-whitelist/releases/tags/' . $version;
+                $api_url_no_v = 'https://api.github.com/repos/AQ-Marketing/aqm-formidable-zip-whitelist/releases/tags/' . $version;
                 $response = wp_remote_get($api_url_no_v, [
                     'timeout' => 15,
                     'headers' => $headers,
@@ -1073,7 +1073,7 @@ class AQM_Formidable_Location_Whitelist {
                             'Release v' . $version . ' exists but has no downloadable ZIP file. Please create a GitHub Release with a ZIP asset attached.',
                             [
                                 'version' => $version,
-                                'release_url' => isset($data['html_url']) ? $data['html_url'] : 'https://github.com/JustCasey76/aqm-formidable-zip-whitelist/releases',
+                                'release_url' => isset($data['html_url']) ? $data['html_url'] : 'https://github.com/AQ-Marketing/aqm-formidable-zip-whitelist/releases',
                             ]
                         );
                     }
