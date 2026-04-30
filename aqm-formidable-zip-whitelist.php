@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AQM Formidable ZIP & State Whitelist (Hardened)
  * Description: Server-side ZIP/State allowlist for Formidable Forms. Auto-detects ZIP/State fields; error color/size controls. Hardened against Unicode/invisible chars and double-enforced on create/update.
- * Version: 1.10.31
+ * Version: 1.10.32
  * Author: AQ Marketing (Justin Casey)
  * License: GPL-2.0+
  */
@@ -21,7 +21,7 @@ if (!class_exists('AQM_Formidable_Location_Whitelist')) {
 class AQM_Formidable_Location_Whitelist {
     const OPTION    = 'aqm_ff_location_whitelist';
     const PAGE_SLUG = 'aqm-ff-location-whitelist';
-    const VERSION   = '1.10.31';
+    const VERSION   = '1.10.32';
     private static $script_added = false;
 
     public function __construct() {
@@ -596,16 +596,30 @@ class AQM_Formidable_Location_Whitelist {
     }
     
     /**
-     * Clear update cache after plugin update completes
+     * Clear update cache after plugin update completes.
+     * Handles single-plugin updates ($hook_extra['plugin']) AND bulk updates
+     * ($hook_extra['plugins'] is an array — used by update-core.php and bulk actions).
+     * Without the bulk-path branch, the stale "latest version" transient survived
+     * a bulk update and the same update prompt kept reappearing.
      */
     public function clear_cache_after_update($upgrader, $hook_extra) {
-        // Only clear cache if this plugin was updated
-        if (isset($hook_extra['plugin']) && $hook_extra['plugin'] === plugin_basename(__FILE__)) {
-            error_log('AQM Plugin Update: Update completed, clearing cache...');
-            $this->clear_update_cache();
-            // Also delete the entire update_plugins transient to force fresh check
-            delete_site_transient('update_plugins');
+        if (!isset($hook_extra['type']) || $hook_extra['type'] !== 'plugin') return;
+        if (!isset($hook_extra['action']) || $hook_extra['action'] !== 'update') return;
+
+        $self = plugin_basename(__FILE__);
+        $touched = false;
+        if (!empty($hook_extra['plugins']) && is_array($hook_extra['plugins'])) {
+            $touched = in_array($self, $hook_extra['plugins'], true);
+        } elseif (!empty($hook_extra['plugin'])) {
+            $touched = ($hook_extra['plugin'] === $self);
         }
+        if (!$touched) return;
+
+        error_log('AQM Plugin Update: Update completed, clearing cache and forcing fresh check...');
+        $this->clear_update_cache();
+        delete_site_transient('update_plugins');
+        // Force a fresh GitHub fetch so the next update_plugins regeneration uses a real value, not a stale 1-hour cache.
+        $this->get_latest_github_version(true);
     }
 
     public function plugin_info($false, $action, $response) {
