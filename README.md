@@ -19,10 +19,22 @@ Server-side ZIP/State allowlist for Formidable Forms. Auto-detects location fiel
 
 ## Installation
 
-1. Download or clone this repository
-2. Upload the `aqm-formidable-zip-whitelist` folder to `/wp-content/plugins/`
-3. Activate the plugin through the 'Plugins' menu in WordPress
-4. Navigate to **Location Whitelist** in the WordPress admin menu
+1. **From zip (recommended):** Download the release zip from [GitHub Releases](https://github.com/JustCasey76/aqm-formidable-zip-whitelist/releases). In WordPress go to **Plugins → Add New → Upload Plugin**, choose the zip, then **Install Now** and **Activate**.
+2. **From folder:** Upload the `aqm-formidable-zip-whitelist` folder to `/wp-content/plugins/`, then activate via **Plugins** in WordPress.
+3. Navigate to **Location Whitelist** in the WordPress admin menu.
+
+### "Plugin file does not exist" after activating
+
+This usually means WordPress has a stale or wrong plugin path (often from a duplicate folder or a bad zip). Fix it:
+
+1. **Remove duplicate folders**  
+   In `/wp-content/plugins/` delete any extra copies, e.g. `aqm-formidable-zip-whitelist-1` or `aqm-formidable-zip-whitelist (1)`. Keep only one folder: `aqm-formidable-zip-whitelist` containing `aqm-formidable-zip-whitelist.php`.
+
+2. **Clean active plugins**  
+   If the error persists, deactivate the plugin (if it appears in the list), then remove the broken entry from the database: in `wp_options` find `active_plugins` and remove the line for `aqm-formidable-zip-whitelist-1/aqm-formidable-zip-whitelist.php` (or any path that doesn’t match your single folder). Then activate again from **Plugins**.
+
+3. **Reinstall from GitHub**  
+   Use the zip from the [Releases](https://github.com/JustCasey76/aqm-formidable-zip-whitelist/releases) page (built with correct paths). Avoid zips built on Windows with tools that use backslashes inside the archive.
 
 ## Quick Setup
 
