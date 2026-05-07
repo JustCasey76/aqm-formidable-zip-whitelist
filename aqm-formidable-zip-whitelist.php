@@ -2,7 +2,7 @@
 /**
  * Plugin Name: AQM Formidable ZIP & State Whitelist (Hardened)
  * Description: Server-side ZIP/State allowlist for Formidable Forms. Auto-detects ZIP/State fields; error color/size controls. Hardened against Unicode/invisible chars and double-enforced on create/update.
- * Version: 1.10.32
+ * Version: 1.10.34
  * Author: AQ Marketing (Justin Casey)
  * License: GPL-2.0+
  */
@@ -21,7 +21,7 @@ if (!class_exists('AQM_Formidable_Location_Whitelist')) {
 class AQM_Formidable_Location_Whitelist {
     const OPTION    = 'aqm_ff_location_whitelist';
     const PAGE_SLUG = 'aqm-ff-location-whitelist';
-    const VERSION   = '1.10.32';
+    const VERSION   = '1.10.34';
     private static $script_added = false;
 
     public function __construct() {
@@ -355,9 +355,11 @@ class AQM_Formidable_Location_Whitelist {
     /* Extra enforcement */
     public function enforce_or_die($entry,$form_id){
         if (is_admin() && !wp_doing_ajax()) return;
+        // wp_unslash because WP magic-quotes-style slashes $_POST; we compare against normalized allowlists.
+        $item_meta = isset($_POST['item_meta']) ? (array) wp_unslash($_POST['item_meta']) : [];
         $posted = [
-            'form_id'   => $form_id,
-            'item_meta' => isset($_POST['item_meta']) ? (array) $_POST['item_meta'] : [],
+            'form_id'   => (int) $form_id,
+            'item_meta' => $item_meta,
         ];
         $errors = $this->validate_location([], $posted);
         if (!empty($errors)) {
@@ -446,7 +448,13 @@ class AQM_Formidable_Location_Whitelist {
         if(empty($fields)||empty($keywords)) return [];
         $out=[]; foreach($fields as $f){
             $label=strtolower(trim((string)$f['name'])); if($label==='') continue;
-            foreach($keywords as $k){ $k=strtolower($k); if($k!=='' && strpos($label,$k)!==false){ $out[]=$f; break; } }
+            foreach($keywords as $k){
+                $k=strtolower($k);
+                if($k==='') continue;
+                // Word-boundary match so "state" doesn't match "Real Estate" and "postal" doesn't match "Postalert".
+                $pattern = '/(^|[^a-z0-9])' . preg_quote($k,'/') . '([^a-z0-9]|$)/i';
+                if(preg_match($pattern,$label)){ $out[]=$f; break; }
+            }
         } return $out;
     }
 
@@ -491,6 +499,16 @@ class AQM_Formidable_Location_Whitelist {
 
     /* ---------------- GitHub Update Checker ---------------- */
 
+    /**
+     * Verbose update-checker logger. Only writes when WP_DEBUG is on, so production
+     * error logs aren't flooded with hundreds of lines per update check.
+     */
+    private function dlog($msg) {
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            error_log('AQM Plugin Update: ' . $msg);
+        }
+    }
+
     public function check_for_updates($transient) {
         if (empty($transient->checked)) return $transient;
         
@@ -510,7 +528,7 @@ class AQM_Formidable_Location_Whitelist {
                     'slug' => 'aqm-formidable-zip-whitelist',
                     'plugin' => $plugin_file,
                     'new_version' => $latest_version,
-                    'url' => 'https://github.com/JustCasey76/aqm-formidable-zip-whitelist',
+                    'url' => 'https://github.com/AQ-Marketing/aqm-formidable-zip-whitelist',
                     'package' => $this->get_github_download_url($latest_version),
                     'id' => $plugin_file,
                     'tested' => get_bloginfo('version'),
@@ -520,7 +538,7 @@ class AQM_Formidable_Location_Whitelist {
                 ];
             } else {
                 // Release doesn't exist or has no assets - don't show update
-                error_log('AQM Plugin Update: Release v' . $latest_version . ' exists but has no downloadable assets, skipping update notification');
+                $this->dlog('Release v' . $latest_version . ' exists but has no downloadable assets, skipping update notification');
                 unset($transient->response[$plugin_file]);
             }
         } else {
@@ -536,7 +554,7 @@ class AQM_Formidable_Location_Whitelist {
      */
     private function verify_release_exists($version) {
         // Try with 'v' prefix first
-        $api_url = 'https://api.github.com/repos/JustCasey76/aqm-formidable-zip-whitelist/releases/tags/v' . $version;
+        $api_url = 'https://api.github.com/repos/AQ-Marketing/aqm-formidable-zip-whitelist/releases/tags/v' . $version;
         $headers = [
             'Accept' => 'application/vnd.github.v3+json',
             'User-Agent' => 'WordPress/' . get_bloginfo('version'),
@@ -551,7 +569,7 @@ class AQM_Formidable_Location_Whitelist {
         if (!is_wp_error($response)) {
             $response_code = wp_remote_retrieve_response_code($response);
             if ($response_code === 404) {
-                $api_url = 'https://api.github.com/repos/JustCasey76/aqm-formidable-zip-whitelist/releases/tags/' . $version;
+                $api_url = 'https://api.github.com/repos/AQ-Marketing/aqm-formidable-zip-whitelist/releases/tags/' . $version;
                 $response = wp_remote_get($api_url, [
                     'timeout' => 10,
                     'headers' => $headers,
@@ -615,7 +633,7 @@ class AQM_Formidable_Location_Whitelist {
         }
         if (!$touched) return;
 
-        error_log('AQM Plugin Update: Update completed, clearing cache and forcing fresh check...');
+        $this->dlog('Update completed, clearing cache and forcing fresh check...');
         $this->clear_update_cache();
         delete_site_transient('update_plugins');
         // Force a fresh GitHub fetch so the next update_plugins regeneration uses a real value, not a stale 1-hour cache.
@@ -623,7 +641,11 @@ class AQM_Formidable_Location_Whitelist {
     }
 
     public function plugin_info($false, $action, $response) {
-        if ($action !== 'plugin_information' || $response->slug !== 'aqm-formidable-zip-whitelist') {
+        if ($action !== 'plugin_information') {
+            return $false;
+        }
+        // $response can be false/null/stdClass depending on caller; guard before reading ->slug.
+        if (!is_object($response) || empty($response->slug) || $response->slug !== 'aqm-formidable-zip-whitelist') {
             return $false;
         }
         
@@ -641,10 +663,11 @@ class AQM_Formidable_Location_Whitelist {
 
     private function get_latest_github_version($force_fresh = false, &$error_info = null) {
         $cache_key = 'aqm_ff_whitelist_latest_version';
-        
+
         // Check if we're on the updates page - if so, reduce cache time for faster detection
-        $is_update_page = (isset($_GET['page']) && $_GET['page'] === 'update-core.php') || 
-                          (isset($_GET['action']) && $_GET['action'] === 'upgrade-plugin');
+        $page_q   = isset($_GET['page'])   ? sanitize_key(wp_unslash($_GET['page']))   : '';
+        $action_q = isset($_GET['action']) ? sanitize_key(wp_unslash($_GET['action'])) : '';
+        $is_update_page = ($page_q === 'update-core.php') || ($action_q === 'upgrade-plugin');
         
         // Use shorter cache (5 minutes) when on update page, otherwise 1 hour
         $cache_time = $is_update_page ? 5 * MINUTE_IN_SECONDS : 1 * HOUR_IN_SECONDS;
@@ -659,14 +682,14 @@ class AQM_Formidable_Location_Whitelist {
         
         // Repository is public, so we don't need authentication
         // Skip token authentication to avoid 401 errors with invalid/expired tokens
-        $api_url = 'https://api.github.com/repos/JustCasey76/aqm-formidable-zip-whitelist/releases';
+        $api_url = 'https://api.github.com/repos/AQ-Marketing/aqm-formidable-zip-whitelist/releases';
         $headers = [
             'Accept' => 'application/vnd.github.v3+json',
             'User-Agent' => 'WordPress/' . get_bloginfo('version'),
         ];
         
         // Don't use authentication for public repos
-        error_log('AQM Plugin Update Check: Checking /releases endpoint: ' . $api_url . ' (public repo, no authentication)');
+        $this->dlog('Checking /releases endpoint: ' . $api_url . ' (public repo, no authentication)');
         
         $response = wp_remote_get($api_url, [
             'timeout' => 15,
@@ -676,7 +699,7 @@ class AQM_Formidable_Location_Whitelist {
         if (is_wp_error($response)) {
             $error_message = $response->get_error_message();
             $error_code = $response->get_error_code();
-            error_log('AQM Plugin Update Check: GitHub API error - ' . $error_code . ': ' . $error_message);
+            $this->dlog('GitHub API error - ' . $error_code . ': ' . $error_message);
             $error_info = [
                 'type' => 'wp_error',
                 'code' => $error_code,
@@ -691,13 +714,13 @@ class AQM_Formidable_Location_Whitelist {
         // Log response headers for debugging
         $response_headers = wp_remote_retrieve_headers($response);
         $rate_limit_remaining = isset($response_headers['x-ratelimit-remaining']) ? $response_headers['x-ratelimit-remaining'] : 'unknown';
-        error_log('AQM Plugin Update Check: Response code: ' . $response_code . ', Rate limit remaining: ' . $rate_limit_remaining);
+        $this->dlog('Response code: ' . $response_code . ', Rate limit remaining: ' . $rate_limit_remaining);
         
         if ($response_code === 404) {
             // No releases found
             $body = wp_remote_retrieve_body($response);
             $error_body = substr($body, 0, 500);
-            error_log('AQM Plugin Update Check: 404 error - No releases found. Response: ' . $error_body);
+            $this->dlog('404 error - No releases found. Response: ' . $error_body);
             
             $error_info = [
                 'type' => 'http_error',
@@ -710,7 +733,7 @@ class AQM_Formidable_Location_Whitelist {
         
         if ($response_code === 401) {
             // Unauthorized - shouldn't happen for public repos, but log it
-            error_log('AQM Plugin Update Check: 401 Unauthorized - Unexpected for public repository.');
+            $this->dlog('401 Unauthorized - Unexpected for public repository.');
             $body = wp_remote_retrieve_body($response);
             $error_body = substr($body, 0, 500);
             $error_info = [
@@ -725,7 +748,7 @@ class AQM_Formidable_Location_Whitelist {
         if ($response_code !== 200) {
             $body = wp_remote_retrieve_body($response);
             $error_body = substr($body, 0, 500);
-            error_log('AQM Plugin Update Check: GitHub API returned code ' . $response_code . ' - ' . $error_body);
+            $this->dlog('GitHub API returned code ' . $response_code . ' - ' . $error_body);
             $error_info = [
                 'type' => 'http_error',
                 'code' => $response_code,
@@ -738,7 +761,7 @@ class AQM_Formidable_Location_Whitelist {
         $data = json_decode($body, true);
         
         if (json_last_error() !== JSON_ERROR_NONE) {
-            error_log('AQM Plugin Update Check: JSON decode error - ' . json_last_error_msg());
+            $this->dlog('JSON decode error - ' . json_last_error_msg());
             $error_info = [
                 'type' => 'json_error',
                 'message' => json_last_error_msg(),
@@ -749,24 +772,24 @@ class AQM_Formidable_Location_Whitelist {
         
         // $data is an array of releases, find the first non-draft, non-prerelease release
         if (is_array($data) && !empty($data)) {
-            error_log('AQM Plugin Update Check: Found ' . count($data) . ' releases');
+            $this->dlog('Found ' . count($data) . ' releases');
             foreach ($data as $release) {
                 if (isset($release['tag_name']) && !empty($release['tag_name']) && 
                     empty($release['draft']) && empty($release['prerelease'])) {
                     $version = ltrim($release['tag_name'], 'v'); // Remove 'v' prefix if present
-                    error_log('AQM Plugin Update Check: Found valid release version: ' . $version);
+                    $this->dlog('Found valid release version: ' . $version);
                     set_transient($cache_key, $version, $cache_time);
                     $error_info = null; // Clear error info on success
                     return $version;
                 }
             }
-            error_log('AQM Plugin Update Check: All releases are drafts or prereleases');
+            $this->dlog('All releases are drafts or prereleases');
         }
         
         // Log if no valid releases found
         $debug_body = substr($body, 0, 1000);
         $response_keys = isset($data) && is_array($data) ? array_keys($data) : [];
-        error_log('AQM Plugin Update Check: No valid releases found. Response code: ' . $response_code . ' | Keys: ' . implode(', ', $response_keys) . ' | Response: ' . $debug_body);
+        $this->dlog('No valid releases found. Response code: ' . $response_code . ' | Keys: ' . implode(', ', $response_keys) . ' | Response: ' . $debug_body);
         
         // Always set error_info when no releases found
         $error_info = [
@@ -785,7 +808,7 @@ class AQM_Formidable_Location_Whitelist {
     private function get_github_download_url($version) {
         // Return the direct GitHub release download URL
         // We'll intercept the download via upgrader_pre_download filter to get the correct asset URL
-        return "https://github.com/JustCasey76/aqm-formidable-zip-whitelist/releases/download/v{$version}/aqm-formidable-zip-whitelist.zip";
+        return "https://github.com/AQ-Marketing/aqm-formidable-zip-whitelist/releases/download/v{$version}/aqm-formidable-zip-whitelist.zip";
     }
     
     public function handle_private_repo_download($reply, $package, $upgrader) {
@@ -793,26 +816,26 @@ class AQM_Formidable_Location_Whitelist {
         static $recursion_depth = 0;
         $recursion_depth++;
         
-        error_log('AQM Plugin Update: ========== DOWNLOAD HANDLER STARTED (depth: ' . $recursion_depth . ') ==========');
-        error_log('AQM Plugin Update: Package URL: ' . $package);
-        error_log('AQM Plugin Update: Reply type: ' . gettype($reply));
-        error_log('AQM Plugin Update: Upgrader class: ' . (is_object($upgrader) ? get_class($upgrader) : 'not an object'));
+        $this->dlog('========== DOWNLOAD HANDLER STARTED (depth: ' . $recursion_depth . ') ==========');
+        $this->dlog('Package URL: ' . $package);
+        $this->dlog('Reply type: ' . gettype($reply));
+        $this->dlog('Upgrader class: ' . (is_object($upgrader) ? get_class($upgrader) : 'not an object'));
         
         // Only handle downloads for this plugin
         if (strpos($package, 'aqm-formidable-zip-whitelist') === false) {
-            error_log('AQM Plugin Update: Package does not match plugin name, returning original reply');
+            $this->dlog('Package does not match plugin name, returning original reply');
             $recursion_depth = 0; // Reset on exit
             return $reply;
         }
         
         // Prevent infinite recursion
         if ($recursion_depth > 3) {
-            error_log('AQM Plugin Update: ERROR - Recursion depth exceeded, returning false');
+            $this->dlog('ERROR - Recursion depth exceeded, returning false');
             $recursion_depth = 0;
             return false;
         }
         
-        error_log('AQM Plugin Update: Package matches plugin name, processing...');
+        $this->dlog('Package matches plugin name, processing...');
         
         // Repository is public, so we don't need authentication
         // Extract version from package URL - handle multiple URL formats
@@ -826,12 +849,12 @@ class AQM_Formidable_Location_Whitelist {
         }
         
         if ($version) {
-            error_log('AQM Plugin Update: Extracted version from URL: ' . $version);
+            $this->dlog('Extracted version from URL: ' . $version);
             
             // Get the release assets from GitHub API to find the correct download URL
             // Try with 'v' prefix first, then without if that fails
-            $api_url = 'https://api.github.com/repos/JustCasey76/aqm-formidable-zip-whitelist/releases/tags/v' . $version;
-            error_log('AQM Plugin Update: API URL: ' . $api_url);
+            $api_url = 'https://api.github.com/repos/AQ-Marketing/aqm-formidable-zip-whitelist/releases/tags/v' . $version;
+            $this->dlog('API URL: ' . $api_url);
             
             $headers = [
                 'Accept' => 'application/vnd.github.v3+json',
@@ -839,71 +862,71 @@ class AQM_Formidable_Location_Whitelist {
             ];
             
             // Don't use authentication for public repos
-            error_log('AQM Plugin Update: Using unauthenticated API request (public repo)');
-            error_log('AQM Plugin Update: Request headers: ' . print_r($headers, true));
+            $this->dlog('Using unauthenticated API request (public repo)');
+            $this->dlog('Request headers: ' . print_r($headers, true));
             
-            error_log('AQM Plugin Update: Making API request to GitHub...');
+            $this->dlog('Making API request to GitHub...');
             $response = wp_remote_get($api_url, [
                 'timeout' => 15,
                 'headers' => $headers,
             ]);
             
             if (is_wp_error($response)) {
-                error_log('AQM Plugin Update: API request failed with WP_Error: ' . $response->get_error_message());
-                error_log('AQM Plugin Update: Error code: ' . $response->get_error_code());
+                $this->dlog('API request failed with WP_Error: ' . $response->get_error_message());
+                $this->dlog('Error code: ' . $response->get_error_code());
                 $recursion_depth = 0;
                 return new WP_Error('api_request_failed', 'Failed to fetch release info: ' . $response->get_error_message());
             }
             
             $response_code = wp_remote_retrieve_response_code($response);
             $response_headers = wp_remote_retrieve_headers($response);
-            error_log('AQM Plugin Update: Release API response code: ' . $response_code);
-            error_log('AQM Plugin Update: Response headers: ' . print_r($response_headers, true));
+            $this->dlog('Release API response code: ' . $response_code);
+            $this->dlog('Response headers: ' . print_r($response_headers, true));
             
             // If 404, try without 'v' prefix
             if ($response_code === 404) {
-                error_log('AQM Plugin Update: Tag with "v" prefix not found, trying without prefix...');
-                $api_url_no_v = 'https://api.github.com/repos/JustCasey76/aqm-formidable-zip-whitelist/releases/tags/' . $version;
+                $this->dlog('Tag with "v" prefix not found, trying without prefix...');
+                $api_url_no_v = 'https://api.github.com/repos/AQ-Marketing/aqm-formidable-zip-whitelist/releases/tags/' . $version;
                 $response = wp_remote_get($api_url_no_v, [
                     'timeout' => 15,
                     'headers' => $headers,
                 ]);
                 
                 if (is_wp_error($response)) {
-                    error_log('AQM Plugin Update: Retry API request failed with WP_Error: ' . $response->get_error_message());
+                    $this->dlog('Retry API request failed with WP_Error: ' . $response->get_error_message());
                     $recursion_depth = 0;
                     return new WP_Error('api_request_failed', 'Failed to fetch release info: ' . $response->get_error_message());
                 }
                 
                 $response_code = wp_remote_retrieve_response_code($response);
-                error_log('AQM Plugin Update: Retry API response code: ' . $response_code);
+                $this->dlog('Retry API response code: ' . $response_code);
             }
             
             if ($response_code === 200) {
-                error_log('AQM Plugin Update: API request successful (200 OK)');
+                $this->dlog('API request successful (200 OK)');
                 $body = wp_remote_retrieve_body($response);
                 $body_length = strlen($body);
-                error_log('AQM Plugin Update: Response body length: ' . $body_length . ' bytes');
-                error_log('AQM Plugin Update: Response body preview (first 500 chars): ' . substr($body, 0, 500));
+                $this->dlog('Response body length: ' . $body_length . ' bytes');
+                $this->dlog('Response body preview (first 500 chars): ' . substr($body, 0, 500));
                 
                 $data = json_decode($body, true);
                 $json_error = json_last_error();
                 if ($json_error !== JSON_ERROR_NONE) {
-                    error_log('AQM Plugin Update: JSON decode failed with error: ' . json_last_error_msg());
+                    $this->dlog('JSON decode failed with error: ' . json_last_error_msg());
                     $recursion_depth = 0;
                     return new WP_Error('json_decode_failed', 'Failed to decode GitHub API response: ' . json_last_error_msg());
                 }
                 
-                error_log('AQM Plugin Update: JSON decoded successfully');
-                error_log('AQM Plugin Update: Release data keys: ' . implode(', ', array_keys($data)));
+                $this->dlog('JSON decoded successfully');
+                $this->dlog('Release data keys: ' . implode(', ', array_keys($data)));
                 
                 if (isset($data['assets']) && is_array($data['assets'])) {
                     $asset_count = count($data['assets']);
-                    error_log('AQM Plugin Update: Found ' . $asset_count . ' assets in release');
+                    $this->dlog('Found ' . $asset_count . ' assets in release');
                     
                     // Log all assets for debugging
                     foreach ($data['assets'] as $idx => $asset) {
-                        error_log('AQM Plugin Update: Asset #' . $idx . ': ' . print_r([
+                        $this->dlog('Asset #' . $idx . ': ' . print_r([
                             'id' => isset($asset['id']) ? $asset['id'] : 'N/A',
                             'name' => isset($asset['name']) ? $asset['name'] : 'N/A',
                             'size' => isset($asset['size']) ? $asset['size'] : 'N/A',
@@ -913,11 +936,11 @@ class AQM_Formidable_Location_Whitelist {
                     }
                     
                     // First, try to find exact match
-                    error_log('AQM Plugin Update: Searching for exact match: aqm-formidable-zip-whitelist.zip');
+                    $this->dlog('Searching for exact match: aqm-formidable-zip-whitelist.zip');
                     $matching_asset = null;
                     foreach ($data['assets'] as $asset) {
                         if (isset($asset['name']) && strpos($asset['name'], 'aqm-formidable-zip-whitelist.zip') !== false) {
-                            error_log('AQM Plugin Update: Found exact match: ' . $asset['name']);
+                            $this->dlog('Found exact match: ' . $asset['name']);
                             $matching_asset = $asset;
                             break;
                         }
@@ -925,10 +948,10 @@ class AQM_Formidable_Location_Whitelist {
                     
                     // If no exact match, try any .zip file
                     if (!$matching_asset) {
-                        error_log('AQM Plugin Update: No exact match found, searching for any .zip file');
+                        $this->dlog('No exact match found, searching for any .zip file');
                         foreach ($data['assets'] as $asset) {
                             if (isset($asset['name']) && strpos(strtolower($asset['name']), '.zip') !== false) {
-                                error_log('AQM Plugin Update: Using fallback ZIP asset: ' . $asset['name']);
+                                $this->dlog('Using fallback ZIP asset: ' . $asset['name']);
                                 $matching_asset = $asset;
                                 break;
                             }
@@ -937,30 +960,30 @@ class AQM_Formidable_Location_Whitelist {
                     
                     if ($matching_asset) {
                         $asset = $matching_asset;
-                        error_log('AQM Plugin Update: ========== PROCESSING MATCHING ASSET ==========');
-                        error_log('AQM Plugin Update: Asset name: ' . (isset($asset['name']) ? $asset['name'] : 'N/A'));
-                        error_log('AQM Plugin Update: Asset ID: ' . (isset($asset['id']) ? $asset['id'] : 'N/A'));
-                        error_log('AQM Plugin Update: Asset size: ' . (isset($asset['size']) ? $asset['size'] : 'N/A'));
-                        error_log('AQM Plugin Update: Asset browser_download_url: ' . (isset($asset['browser_download_url']) ? $asset['browser_download_url'] : 'NOT SET'));
-                        error_log('AQM Plugin Update: Asset url: ' . (isset($asset['url']) ? $asset['url'] : 'NOT SET'));
+                        $this->dlog('========== PROCESSING MATCHING ASSET ==========');
+                        $this->dlog('Asset name: ' . (isset($asset['name']) ? $asset['name'] : 'N/A'));
+                        $this->dlog('Asset ID: ' . (isset($asset['id']) ? $asset['id'] : 'N/A'));
+                        $this->dlog('Asset size: ' . (isset($asset['size']) ? $asset['size'] : 'N/A'));
+                        $this->dlog('Asset browser_download_url: ' . (isset($asset['browser_download_url']) ? $asset['browser_download_url'] : 'NOT SET'));
+                        $this->dlog('Asset url: ' . (isset($asset['url']) ? $asset['url'] : 'NOT SET'));
                         
                         // For public repos, always use browser_download_url (no authentication needed)
                         if (isset($asset['browser_download_url'])) {
                             // Public repo - use direct download URL
                             $download_url = $asset['browser_download_url'];
-                            error_log('AQM Plugin Update: Using browser_download_url: ' . $download_url);
+                            $this->dlog('Using browser_download_url: ' . $download_url);
                         } else {
                             // Fallback to url field if browser_download_url is not available
                             $download_url = isset($asset['url']) ? $asset['url'] : '';
-                            error_log('AQM Plugin Update: browser_download_url not available, using url field: ' . ($download_url ? $download_url : 'NOT SET'));
+                            $this->dlog('browser_download_url not available, using url field: ' . ($download_url ? $download_url : 'NOT SET'));
                         }
                         
                         if (empty($download_url)) {
-                            error_log('AQM Plugin Update: ERROR - No download URL available for asset');
-                            error_log('AQM Plugin Update: Full asset data: ' . print_r($asset, true));
+                            $this->dlog('ERROR - No download URL available for asset');
+                            $this->dlog('Full asset data: ' . print_r($asset, true));
                         } else {
-                            error_log('AQM Plugin Update: ========== STARTING DOWNLOAD ==========');
-                            error_log('AQM Plugin Update: Download URL: ' . $download_url);
+                            $this->dlog('========== STARTING DOWNLOAD ==========');
+                            $this->dlog('Download URL: ' . $download_url);
                             
                             // Set up headers for binary download (no authentication for public repos)
                             $download_headers = [
@@ -968,26 +991,26 @@ class AQM_Formidable_Location_Whitelist {
                                 'User-Agent' => 'WordPress/' . get_bloginfo('version'),
                             ];
                             
-                            error_log('AQM Plugin Update: Download headers: ' . print_r($download_headers, true));
-                            error_log('AQM Plugin Update: Downloading without authentication (public repo)');
+                            $this->dlog('Download headers: ' . print_r($download_headers, true));
+                            $this->dlog('Downloading without authentication (public repo)');
                             
                             // Create temp file path - ensure directory separator is correct
                             $temp_dir = get_temp_dir();
-                            error_log('AQM Plugin Update: Temp directory: ' . $temp_dir);
-                            error_log('AQM Plugin Update: Temp directory exists: ' . (is_dir($temp_dir) ? 'YES' : 'NO'));
-                            error_log('AQM Plugin Update: Temp directory writable: ' . (is_writable($temp_dir) ? 'YES' : 'NO'));
+                            $this->dlog('Temp directory: ' . $temp_dir);
+                            $this->dlog('Temp directory exists: ' . (is_dir($temp_dir) ? 'YES' : 'NO'));
+                            $this->dlog('Temp directory writable: ' . (is_writable($temp_dir) ? 'YES' : 'NO'));
                             
                             if (!is_dir($temp_dir)) {
-                                error_log('AQM Plugin Update: ERROR - Temp directory does not exist: ' . $temp_dir);
+                                $this->dlog('ERROR - Temp directory does not exist: ' . $temp_dir);
                                 $recursion_depth = 0;
                                 return new WP_Error('temp_dir_missing', 'Temporary directory does not exist: ' . $temp_dir);
                             }
                             
                             $file_path = trailingslashit($temp_dir) . 'aqm-formidable-zip-whitelist-' . $version . '-' . time() . '.zip';
-                            error_log('AQM Plugin Update: Target file path: ' . $file_path);
+                            $this->dlog('Target file path: ' . $file_path);
                             
                             // Try downloading to memory first (more reliable)
-                            error_log('AQM Plugin Update: Making download request...');
+                            $this->dlog('Making download request...');
                             $download_start_time = microtime(true);
                             $download_response = wp_remote_get($download_url, [
                                 'timeout' => 300,
@@ -995,94 +1018,94 @@ class AQM_Formidable_Location_Whitelist {
                                 'stream' => false, // Download to memory
                             ]);
                             $download_time = microtime(true) - $download_start_time;
-                            error_log('AQM Plugin Update: Download request completed in ' . round($download_time, 2) . ' seconds');
+                            $this->dlog('Download request completed in ' . round($download_time, 2) . ' seconds');
                             
                             if (is_wp_error($download_response)) {
                                 $error_message = $download_response->get_error_message();
                                 $error_code = $download_response->get_error_code();
-                                error_log('AQM Plugin Update: ERROR - Download failed with WP_Error');
-                                error_log('AQM Plugin Update: Error code: ' . $error_code);
-                                error_log('AQM Plugin Update: Error message: ' . $error_message);
+                                $this->dlog('ERROR - Download failed with WP_Error');
+                                $this->dlog('Error code: ' . $error_code);
+                                $this->dlog('Error message: ' . $error_message);
                                 $recursion_depth = 0;
                                 return new WP_Error('download_error', 'Download failed: ' . $error_message);
                             }
                             
                             $response_code = wp_remote_retrieve_response_code($download_response);
                             $response_headers = wp_remote_retrieve_headers($download_response);
-                            error_log('AQM Plugin Update: Download response code: ' . $response_code);
-                            error_log('AQM Plugin Update: Download response headers: ' . print_r($response_headers, true));
+                            $this->dlog('Download response code: ' . $response_code);
+                            $this->dlog('Download response headers: ' . print_r($response_headers, true));
                             
                             if ($response_code === 200) {
-                                error_log('AQM Plugin Update: Download successful (200 OK)');
+                                $this->dlog('Download successful (200 OK)');
                                 $file_content = wp_remote_retrieve_body($download_response);
                                 $content_size = strlen($file_content);
-                                error_log('AQM Plugin Update: Downloaded content size: ' . $content_size . ' bytes');
+                                $this->dlog('Downloaded content size: ' . $content_size . ' bytes');
                                 
                                 if ($content_size > 0) {
-                                    error_log('AQM Plugin Update: Writing file to disk...');
+                                    $this->dlog('Writing file to disk...');
                                     $bytes_written = file_put_contents($file_path, $file_content);
-                                    error_log('AQM Plugin Update: file_put_contents returned: ' . ($bytes_written !== false ? $bytes_written . ' bytes written' : 'FALSE'));
+                                    $this->dlog('file_put_contents returned: ' . ($bytes_written !== false ? $bytes_written . ' bytes written' : 'FALSE'));
                                     
                                     if ($bytes_written !== false) {
                                         $file_size = filesize($file_path);
-                                        error_log('AQM Plugin Update: File size on disk: ' . $file_size . ' bytes');
-                                        error_log('AQM Plugin Update: File exists: ' . (file_exists($file_path) ? 'YES' : 'NO'));
-                                        error_log('AQM Plugin Update: File readable: ' . (is_readable($file_path) ? 'YES' : 'NO'));
+                                        $this->dlog('File size on disk: ' . $file_size . ' bytes');
+                                        $this->dlog('File exists: ' . (file_exists($file_path) ? 'YES' : 'NO'));
+                                        $this->dlog('File readable: ' . (is_readable($file_path) ? 'YES' : 'NO'));
                                         
                                         if ($file_size > 0 && $file_size === $content_size) {
-                                            error_log('AQM Plugin Update: ========== DOWNLOAD SUCCESSFUL ==========');
-                                            error_log('AQM Plugin Update: File saved to: ' . $file_path);
-                                            error_log('AQM Plugin Update: File size: ' . $file_size . ' bytes');
+                                            $this->dlog('========== DOWNLOAD SUCCESSFUL ==========');
+                                            $this->dlog('File saved to: ' . $file_path);
+                                            $this->dlog('File size: ' . $file_size . ' bytes');
                                             
                                             // Verify file is readable
                                             if (is_readable($file_path)) {
-                                                error_log('AQM Plugin Update: File is readable, returning path to WordPress');
+                                                $this->dlog('File is readable, returning path to WordPress');
                                                 $recursion_depth = 0; // Reset on success
                                                 return $file_path; // Return file path for WordPress to use
                                             } else {
-                                                error_log('AQM Plugin Update: ERROR - File saved but is not readable');
-                                                error_log('AQM Plugin Update: File permissions: ' . substr(sprintf('%o', fileperms($file_path)), -4));
+                                                $this->dlog('ERROR - File saved but is not readable');
+                                                $this->dlog('File permissions: ' . substr(sprintf('%o', fileperms($file_path)), -4));
                                                 $recursion_depth = 0;
                                                 return new WP_Error('file_not_readable', 'Downloaded file is not readable: ' . $file_path);
                                             }
                                         } else {
-                                            error_log('AQM Plugin Update: ERROR - File size mismatch');
-                                            error_log('AQM Plugin Update: Expected size: ' . $content_size . ' bytes');
-                                            error_log('AQM Plugin Update: Actual size: ' . $file_size . ' bytes');
+                                            $this->dlog('ERROR - File size mismatch');
+                                            $this->dlog('Expected size: ' . $content_size . ' bytes');
+                                            $this->dlog('Actual size: ' . $file_size . ' bytes');
                                             $recursion_depth = 0;
                                             return new WP_Error('file_size_mismatch', 'Downloaded file size does not match expected size.');
                                         }
                                     } else {
-                                        error_log('AQM Plugin Update: ERROR - Failed to write file to disk');
-                                        error_log('AQM Plugin Update: File path: ' . $file_path);
-                                        error_log('AQM Plugin Update: Directory writable: ' . (is_writable(dirname($file_path)) ? 'YES' : 'NO'));
+                                        $this->dlog('ERROR - Failed to write file to disk');
+                                        $this->dlog('File path: ' . $file_path);
+                                        $this->dlog('Directory writable: ' . (is_writable(dirname($file_path)) ? 'YES' : 'NO'));
                                         $recursion_depth = 0;
                                         return new WP_Error('file_write_failed', 'Failed to write downloaded file. Check directory permissions.');
                                     }
                                 } else {
-                                    error_log('AQM Plugin Update: ERROR - Downloaded content is empty');
+                                    $this->dlog('ERROR - Downloaded content is empty');
                                     $recursion_depth = 0;
                                     return new WP_Error('empty_download', 'Downloaded file is empty.');
                                 }
                             } else {
                                 $error_body = wp_remote_retrieve_body($download_response);
                                 $error_body_preview = substr($error_body, 0, 500);
-                                error_log('AQM Plugin Update: ERROR - Download failed with code ' . $response_code);
-                                error_log('AQM Plugin Update: Error response body: ' . $error_body_preview);
+                                $this->dlog('ERROR - Download failed with code ' . $response_code);
+                                $this->dlog('Error response body: ' . $error_body_preview);
                                 $recursion_depth = 0;
                                 return new WP_Error('download_failed', 'Download failed with error code ' . $response_code . '.');
                             }
                         }
                     } else {
                         // No matching asset found
-                        error_log('AQM Plugin Update: ========== NO MATCHING ASSET FOUND ==========');
+                        $this->dlog('========== NO MATCHING ASSET FOUND ==========');
                         if (empty($data['assets']) || count($data['assets']) === 0) {
-                            error_log('AQM Plugin Update: No assets found in release v' . $version);
-                            error_log('AQM Plugin Update: Release exists but has no downloadable assets. Please create a GitHub Release with a ZIP file attached.');
+                            $this->dlog('No assets found in release v' . $version);
+                            $this->dlog('Release exists but has no downloadable assets. Please create a GitHub Release with a ZIP file attached.');
                         } else {
-                            error_log('AQM Plugin Update: Assets found but none matched. Available assets:');
+                            $this->dlog('Assets found but none matched. Available assets:');
                             foreach ($data['assets'] as $asset) {
-                                error_log('AQM Plugin Update: Available asset: ' . (isset($asset['name']) ? $asset['name'] : 'unnamed'));
+                                $this->dlog('Available asset: ' . (isset($asset['name']) ? $asset['name'] : 'unnamed'));
                             }
                         }
                         
@@ -1093,61 +1116,61 @@ class AQM_Formidable_Location_Whitelist {
                             'Release v' . $version . ' exists but has no downloadable ZIP file. Please create a GitHub Release with a ZIP asset attached.',
                             [
                                 'version' => $version,
-                                'release_url' => isset($data['html_url']) ? $data['html_url'] : 'https://github.com/JustCasey76/aqm-formidable-zip-whitelist/releases',
+                                'release_url' => isset($data['html_url']) ? $data['html_url'] : 'https://github.com/AQ-Marketing/aqm-formidable-zip-whitelist/releases',
                             ]
                         );
                     }
                 } else {
-                    error_log('AQM Plugin Update: ERROR - Release data does not contain assets array');
-                    error_log('AQM Plugin Update: Available keys in data: ' . implode(', ', array_keys($data)));
-                    error_log('AQM Plugin Update: Full release data: ' . print_r($data, true));
+                    $this->dlog('ERROR - Release data does not contain assets array');
+                    $this->dlog('Available keys in data: ' . implode(', ', array_keys($data)));
+                    $this->dlog('Full release data: ' . print_r($data, true));
                     $recursion_depth = 0;
                     return new WP_Error('invalid_release_data', 'Release data is missing assets array. Available keys: ' . implode(', ', array_keys($data)));
                 }
             } else {
                 $error_body = wp_remote_retrieve_body($response);
                 $error_body_preview = substr($error_body, 0, 500);
-                error_log('AQM Plugin Update: ERROR - Failed to get release info');
-                error_log('AQM Plugin Update: Response code: ' . $response_code);
-                error_log('AQM Plugin Update: Response body: ' . $error_body_preview);
+                $this->dlog('ERROR - Failed to get release info');
+                $this->dlog('Response code: ' . $response_code);
+                $this->dlog('Response body: ' . $error_body_preview);
                 
                 if ($response_code === 404) {
-                    error_log('AQM Plugin Update: Release not found (404)');
+                    $this->dlog('Release not found (404)');
                     $recursion_depth = 0;
                     return new WP_Error('release_not_found', 'Release v' . $version . ' not found. It may not exist yet.');
                 } elseif ($response_code === 401) {
-                    error_log('AQM Plugin Update: Unauthorized (401) - unexpected for public repo');
+                    $this->dlog('Unauthorized (401) - unexpected for public repo');
                     $recursion_depth = 0;
                     return new WP_Error('unauthorized', 'GitHub API returned 401 Unauthorized. This is unexpected for a public repository.');
                 } else {
-                    error_log('AQM Plugin Update: API error with code ' . $response_code);
+                    $this->dlog('API error with code ' . $response_code);
                     $recursion_depth = 0;
                     return new WP_Error('api_error', 'GitHub API error (code ' . $response_code . ').');
                 }
             }
         } else {
-            error_log('AQM Plugin Update: ERROR - Could not extract version from package URL');
-            error_log('AQM Plugin Update: Package URL: ' . $package);
-            error_log('AQM Plugin Update: Attempted patterns: /v([\d.]+)\/aqm-formidable-zip-whitelist\.zip$/, /releases\/download\/v?([\d.]+)\//, /tag\/v?([\d.]+)/');
+            $this->dlog('ERROR - Could not extract version from package URL');
+            $this->dlog('Package URL: ' . $package);
+            $this->dlog('Attempted patterns: /v([\d.]+)\/aqm-formidable-zip-whitelist\.zip$/, /releases\/download\/v?([\d.]+)\//, /tag\/v?([\d.]+)/');
             
             // Try to get the latest release version and use that
-            error_log('AQM Plugin Update: Attempting to get latest release version as fallback...');
+            $this->dlog('Attempting to get latest release version as fallback...');
             $error_info = null;
             $latest_version = $this->get_latest_github_version(false, $error_info);
             
             if ($latest_version) {
-                error_log('AQM Plugin Update: Found latest version: ' . $latest_version . ', retrying download...');
+                $this->dlog('Found latest version: ' . $latest_version . ', retrying download...');
                 // Recursively call ourselves with a constructed package URL
                 $fallback_package = $this->get_github_download_url($latest_version);
                 return $this->handle_private_repo_download($reply, $fallback_package, $upgrader);
             } else {
-                error_log('AQM Plugin Update: Could not get latest version, returning false to let WordPress handle it');
+                $this->dlog('Could not get latest version, returning false to let WordPress handle it');
                 // Return false to let WordPress try the original URL
                 return false;
             }
         }
         
-        error_log('AQM Plugin Update: ========== DOWNLOAD HANDLER FAILED ==========');
+        $this->dlog('========== DOWNLOAD HANDLER FAILED ==========');
         // Return false instead of WP_Error to let WordPress try the original URL
         // This prevents the JavaScript error if our handler fails
         $recursion_depth = 0;
@@ -1187,15 +1210,15 @@ class AQM_Formidable_Location_Whitelist {
                 var originalText = $link.text();
                 $link.text('Checking...').css('pointer-events', 'none');
                 
-                var ajaxUrl = typeof ajaxurl !== 'undefined' ? ajaxurl : '<?php echo admin_url('admin-ajax.php'); ?>';
+                var ajaxUrl = typeof ajaxurl !== 'undefined' ? ajaxurl : '<?php echo esc_url(admin_url('admin-ajax.php')); ?>';
                 console.log('AQM Update Checker: Making AJAX call to', ajaxUrl);
-                
+
                 $.ajax({
                     url: ajaxUrl,
                     type: 'POST',
                     data: {
                         action: 'aqm_check_plugin_update',
-                        _ajax_nonce: '<?php echo wp_create_nonce('aqm_check_update'); ?>'
+                        _ajax_nonce: '<?php echo esc_js(wp_create_nonce('aqm_check_update')); ?>'
                     },
                     success: function(response) {
                         console.log('AQM Update Check Response:', response);
@@ -1242,14 +1265,15 @@ class AQM_Formidable_Location_Whitelist {
     }
 
     public function ajax_check_update() {
-        // Verify nonce
-        if (!isset($_POST['_ajax_nonce']) || !wp_verify_nonce($_POST['_ajax_nonce'], 'aqm_check_update')) {
-            wp_send_json_error('Security check failed');
-            return;
-        }
-        
+        // Capability check first — never leak nonce-validity info to users without rights.
         if (!current_user_can('update_plugins')) {
             wp_send_json_error('Insufficient permissions');
+            return;
+        }
+        // Verify nonce (unslash before passing to wp_verify_nonce per WP coding standards).
+        $nonce = isset($_POST['_ajax_nonce']) ? sanitize_text_field(wp_unslash($_POST['_ajax_nonce'])) : '';
+        if (!wp_verify_nonce($nonce, 'aqm_check_update')) {
+            wp_send_json_error('Security check failed');
             return;
         }
         

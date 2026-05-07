@@ -19,7 +19,7 @@ Server-side ZIP/State allowlist for Formidable Forms. Auto-detects location fiel
 
 ## Installation
 
-1. **From zip (recommended):** Download the release zip from [GitHub Releases](https://github.com/JustCasey76/aqm-formidable-zip-whitelist/releases). In WordPress go to **Plugins → Add New → Upload Plugin**, choose the zip, then **Install Now** and **Activate**.
+1. **From zip (recommended):** Download the release zip from [GitHub Releases](https://github.com/AQ-Marketing/aqm-formidable-zip-whitelist/releases). In WordPress go to **Plugins → Add New → Upload Plugin**, choose the zip, then **Install Now** and **Activate**.
 2. **From folder:** Upload the `aqm-formidable-zip-whitelist` folder to `/wp-content/plugins/`, then activate via **Plugins** in WordPress.
 3. Navigate to **Location Whitelist** in the WordPress admin menu.
 
@@ -34,7 +34,7 @@ This usually means WordPress has a stale or wrong plugin path (often from a dupl
    If the error persists, deactivate the plugin (if it appears in the list), then remove the broken entry from the database: in `wp_options` find `active_plugins` and remove the line for `aqm-formidable-zip-whitelist-1/aqm-formidable-zip-whitelist.php` (or any path that doesn’t match your single folder). Then activate again from **Plugins**.
 
 3. **Reinstall from GitHub**  
-   Use the zip from the [Releases](https://github.com/JustCasey76/aqm-formidable-zip-whitelist/releases) page (built with correct paths). Avoid zips built on Windows with tools that use backslashes inside the archive.
+   Use the zip from the [Releases](https://github.com/AQ-Marketing/aqm-formidable-zip-whitelist/releases) page (built with correct paths). Avoid zips built on Windows with tools that use backslashes inside the archive.
 
 ## Quick Setup
 
